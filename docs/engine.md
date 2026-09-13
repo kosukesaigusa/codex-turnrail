@@ -26,9 +26,11 @@ The Engine changes:
 - Verify registered email before reauthentication credentials are saved and before account routing.
 - Record the last top-level turn start separately from the routing registry.
 - Advertise shared models for assigned accounts and validate the selected account's model before a turn.
-- Preserve a parent command's declined status when an intercepted zsh command is rejected or cancelled.
+- Preserve a parent command's declined status in completion events when an intercepted zsh command is rejected or cancelled.
 
 The public app-server protocol remains identical to the matching upstream version. Code Mode Host and V8 runtime source remain upstream implementations.
+
+Cancelling an intercepted command can interrupt shell startup before the parent command emits a completion event. The turn still completes with `Interrupted`; an accepted earlier subcommand may have run, while the cancelled subcommand must not run.
 
 Product build, cleanup, upstream update, and integration entrypoints live at the repository root. Engine policy adjustments remain beside the relevant upstream tooling. The runtime probe is [`tests/integration/verify_runtime.py`](../tests/integration/verify_runtime.py); packaging and CI invoke the same probe.
 

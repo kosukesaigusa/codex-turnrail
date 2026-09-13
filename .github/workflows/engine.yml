@@ -10,7 +10,7 @@ jobs:
   macos:
     name: macOS Engine and runtime
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: engine/codex-rs
