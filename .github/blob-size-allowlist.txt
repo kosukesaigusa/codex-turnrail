@@ -1,0 +1,12 @@
+# Exact product-relative paths for intentional large source assets.
+
+engine/.github/codex-cli-splash.png
+engine/MODULE.bazel.lock
+engine/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
+engine/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
+engine/codex-rs/models-manager/models.json
+engine/codex-rs/tui/tests/fixtures/oss-story.jsonl
+engine/codex-rs/tui_app_server/tests/fixtures/oss-story.jsonl
+engine/codex-rs/tui/src/app.rs
+packaging/resources/AppIcon.icns
+packaging/resources/AppIcon.png

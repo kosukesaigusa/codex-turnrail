@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  checks:
+    name: Source and app checks
+    uses: ./.github/workflows/source-checks.yml
+
+  dependencies:
+    name: Dependency policy
+    uses: ./.github/workflows/dependency-policy.yml
+
+  spelling:
+    name: Spelling
+    uses: ./.github/workflows/spelling.yml
+
+  blob-size:
+    name: File size policy
+    uses: ./.github/workflows/blob-size.yml
+
+  engine:
+    name: Engine and runtime
+    needs: [checks, dependencies, spelling, blob-size]
+    uses: ./.github/workflows/engine.yml
+
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs: [checks, dependencies, spelling, blob-size, engine]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Require successful dependencies
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/check_ci_results.py

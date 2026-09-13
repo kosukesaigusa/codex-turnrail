@@ -1,0 +1,47 @@
+name: File size policy
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: openai/fence@e6b39c80c51cb2b2a39448ddeff74b3b886c0a63 # v0.10.0
+        with:
+          mode: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check changed file sizes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE_SHA"
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            base="$PUSH_BASE_SHA"
+          else
+            echo "Unsupported CI event: $EVENT_NAME" >&2
+            exit 1
+          fi
+          test -n "$base"
+          # GitHub reports an all-zero before SHA when a branch is created.
+          if [[ "$base" == "0000000000000000000000000000000000000000" ]]; then
+            base="$(git hash-object -w -t tree --stdin </dev/null)"
+          fi
+          python3 engine/scripts/check_blob_size.py \
+            --base "$base" --head "$HEAD_SHA" --max-bytes 512000 \
+            --allowlist .github/blob-size-allowlist.txt
+
+      - name: Check for a clean worktree
+        if: ${{ always() && !cancelled() }}
+        uses: ./engine/.github/actions/check-clean-worktree
