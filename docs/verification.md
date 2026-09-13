@@ -128,7 +128,9 @@ A successful full-workspace run has not been established. The isolated MCP succe
 
 The product now has one root CI entrypoint for app and Engine checks. The required job accepts only explicit success from every dependency. Engine CI builds the CLI, Host, and helpers; runs selected package and core tests; checks Clippy; assembles a runtime; and executes the shared probe. No signing identity or real-account token is needed.
 
-The private-repository attempts stopped before runner startup because GitHub reported an account payment or spending-limit restriction. No workflow steps ran in those attempts. Current results are recorded per commit in [GitHub Actions](https://github.com/kosukesaigusa/codex-turnrail/actions/workflows/ci.yml). A release tag requires successful hosted CI for that exact main revision; local validation does not replace this check.
+Public-repository CI starts successfully on GitHub's standard runners. Earlier private-repository attempts stopped before runner startup because GitHub reported an account payment or spending-limit restriction. Current results are recorded per commit in [GitHub Actions](https://github.com/kosukesaigusa/codex-turnrail/actions/workflows/ci.yml). A release tag requires successful hosted CI for that exact main revision; local validation does not replace this check.
+
+Hosted validation exposed an incorrect assertion in the zsh subcommand cancellation test: a parent `item/completed` event is not guaranteed when cancellation interrupts shell startup. The test requires the terminal `Interrupted` turn, distinct subcommand approval IDs, execution of the accepted first command, and no execution of the cancelled second command. Direct parent rejection and cancellation tests retain their command completion and `Declined` status assertions.
 
 ## Management UI and preservation
 

@@ -430,7 +430,7 @@ async fn turn_start_shell_zsh_fork_exec_approval_cancel_v2() -> Result<()> {
 }
 
 #[tokio::test]
-async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2() -> Result<()> {
+async fn turn_start_shell_zsh_fork_subcommand_cancel_interrupts_turn_v2() -> Result<()> {
     // TODO(anp): Remove after zsh-fork fixtures can run in the selected remote environment.
     skip_if_remote!(
         Ok(()),
@@ -467,7 +467,7 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
     let response = responses::sse(vec![
         responses::ev_response_created("resp-1"),
         responses::ev_function_call(
-            "call-zsh-fork-subcommand-decline",
+            "call-zsh-fork-subcommand-cancel",
             "exec_command",
             &tool_call_arguments,
         ),
@@ -478,7 +478,7 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
         responses::ev_completed("resp-2"),
     ]);
     // Linux CI has occasionally issued a second `/responses` POST after the
-    // subcommand-decline flow. This test is about approval/decline behavior in
+    // subcommand-cancel flow. This test is about approval/cancellation behavior in
     // the zsh fork, not exact model request count, so allow an extra request
     // and return a harmless no-op response if it arrives.
     let server =
@@ -550,7 +550,7 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
         else {
             panic!("expected CommandExecutionRequestApproval request");
         };
-        assert_eq!(params.item_id, "call-zsh-fork-subcommand-decline");
+        assert_eq!(params.item_id, "call-zsh-fork-subcommand-cancel");
         assert_eq!(params.thread_id, thread.id);
         let approval_command = params
             .command
@@ -616,45 +616,9 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
     assert_eq!(approved_subcommand_strings.len(), 2);
     assert!(approved_subcommand_strings[0].contains(&first_file.display().to_string()));
     assert!(approved_subcommand_strings[1].contains(&second_file.display().to_string()));
-    let parent_completed_command_execution = timeout(DEFAULT_READ_TIMEOUT, async {
-        loop {
-            let completed_notif = mcp
-                .read_stream_until_notification_message("item/completed")
-                .await?;
-            let completed: ItemCompletedNotification = serde_json::from_value(
-                completed_notif
-                    .params
-                    .clone()
-                    .expect("item/completed params"),
-            )?;
-            if let ThreadItem::CommandExecution { id, .. } = &completed.item
-                && id == "call-zsh-fork-subcommand-decline"
-            {
-                return Ok::<ThreadItem, anyhow::Error>(completed.item);
-            }
-        }
-    })
-    .await;
-
-    let ThreadItem::CommandExecution {
-        id,
-        status,
-        aggregated_output,
-        exit_code,
-        ..
-    } = parent_completed_command_execution??
-    else {
-        unreachable!("loop ensures we return the parent command execution item");
-    };
-    assert_eq!(id, "call-zsh-fork-subcommand-decline");
-    assert_eq!(status, CommandExecutionStatus::Declined);
-    assert_ne!(exit_code.context("declined command exit code")?, 0);
-    if let Some(output) = aggregated_output {
-        assert!(output.contains("sandbox denied exec error"), "{output}");
-    }
-    assert!(!first_file.exists(), "the accepted subcommand must run");
-    assert!(second_file.exists(), "the declined subcommand must not run");
-
+    // Cancelling an intercepted command can interrupt startup before Core emits
+    // the parent command item. The turn's terminal event is the cancellation
+    // boundary; filesystem effects prove which approved commands ran.
     let completed_notif = timeout(
         DEFAULT_READ_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/completed"),
@@ -664,10 +628,12 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
         serde_json::from_value(completed_notif.params.context("turn/completed params")?)?;
     assert_eq!(completed.thread_id, thread.id);
     assert_eq!(completed.turn.id, turn.id);
-    assert!(matches!(
-        completed.turn.status,
-        TurnStatus::Interrupted | TurnStatus::Completed
-    ));
+    assert_eq!(completed.turn.status, TurnStatus::Interrupted);
+    assert!(!first_file.exists(), "the accepted subcommand must run");
+    assert!(
+        second_file.exists(),
+        "the cancelled subcommand must not run"
+    );
 
     Ok(())
 }
