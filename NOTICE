@@ -1,0 +1,16 @@
+Codex Turnrail
+Copyright 2026 Codex Turnrail contributors
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+Codex Turnrail includes a modified version of OpenAI Codex. Its upstream source
+revision is recorded in upstream.toml. The original Apache-2.0 license and NOTICE
+are retained in engine/LICENSE and engine/NOTICE. Component-specific licenses
+remain applicable to the corresponding components.
+
+Packaged apps include license texts and a Rust-SOURCES.json source index under
+Contents/Resources/Licenses. The index identifies the corresponding source for
+Rust dependencies, including components governed by MPL-2.0.
+
+Codex Turnrail is an independent project and is not affiliated with or endorsed
+by OpenAI.

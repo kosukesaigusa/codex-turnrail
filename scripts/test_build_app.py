@@ -22,7 +22,10 @@ class BuildAppTests(unittest.TestCase):
                 with self.subTest(output=output, script=script):
                     arguments = [str(output)]
                     if script == "build-app.sh":
-                        arguments.append("fixture identity")
+                        arguments.extend(
+                            ["fixture identity", "/fixture/official-codex"]
+                        )
+                    arguments.append("dev-small")
                     result = subprocess.run(
                         [*command, str(REPOSITORY / "scripts" / script), *arguments],
                         capture_output=True,
@@ -53,6 +56,7 @@ class BuildAppTests(unittest.TestCase):
                             "python3",
                             str(REPOSITORY / "scripts/build-runtime.py"),
                             str(root / "runtime"),
+                            "dev-small",
                         ],
                         env={**clean_environment, key: "unverified"},
                         capture_output=True,

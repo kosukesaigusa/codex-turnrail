@@ -18,12 +18,6 @@ public struct CodexCompatibilityContract: Equatable, Sendable {
     self.cliVersion = cliVersion
   }
 
-  public static let supported = CodexCompatibilityContract(
-    bundleIdentifier: "com.openai.codex",
-    appVersion: "26.903.71938",
-    appBuild: "8576",
-    cliVersion: "codex-cli 0.153.4"
-  )
 }
 
 public struct CodexInstallation: Equatable, Sendable {

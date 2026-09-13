@@ -1,8 +1,27 @@
 # Verification
 
-This record distinguishes observed results from work still required before installation and distribution. Codex Turnrail is `0.9.0 (25)`, targeting official Codex `26.903.71938 (8576)` and CLI / Engine `0.153.4`.
+This record distinguishes observed results from work still required before installation and distribution. Current product and supported Codex versions are defined in `packaging/Info.plist` and `upstream.toml`. Historical results below retain the versions that were actually tested.
 
-## Codex Turnrail validation
+## Release preparation for 0.1.0
+
+The September 13, 2026 release-preparation checks used product version `0.1.0 (26)` and the pinned Codex `0.153.4` source. The optimized app and archive were built from committed source `95f9edd1a747d0e841aecb4f7fd086322d134c3d`. Subsequent documentation and spelling-configuration changes do not change the runtime source.
+
+| Check                    | Observed result                                                                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Product versions         | Metadata validation and generated Swift compatibility checks passed. Version tests reject malformed, equal, and older releases while retaining unrelated plist fields.                                                    |
+| Swift and Python         | All 40 Swift tests and 86 Python tooling tests passed.                                                                                                                                                                    |
+| Optimized package        | The Engine and Code Mode Host built with the upstream `release` profile. Stable and experimental app-server schemas matched the checksum-verified official CLI.                                                           |
+| Signed app               | Apple Development signing and deep/strict signature verification passed. The finished app passed JavaScript/parallel tools, approval acceptance, and approval rejection.                                                  |
+| Archive                  | ZIP creation, SHA-256 verification, extracted app signatures, and binary hashes passed. A second archive attempt preserved the existing artifacts.                                                                        |
+| Rejected artifacts       | Six checks rejected dirty-source provenance, another source revision, a changed binary, failed runtime results, an incomplete report, and a mismatched app version. Rejected inputs produced no ZIP or checksum manifest. |
+| Upstream inspection      | The candidate extractor checked safe paths, the OpenAI signature, app metadata, and bundled CLI on a ZIP of the installed official app. The network download was substituted with that local archive for this check.      |
+| Component notices        | The app includes 11 license and notice files, including a source index for 1,381 Rust packages and 13 MPL-licensed package records.                                                                                       |
+| Source publication audit | All 16 source and history scan findings matched the pinned public upstream. Modified upstream files carry notices, and the product has an Apache-2.0 license.                                                             |
+| Cleanup                  | The package command removed 6.7 GiB of generated Rust and Swift artifacts while retaining the signed app, reports, and logs.                                                                                              |
+
+The live upstream observation preserved an HTTP 403 app-feed failure separately from the successful CLI release query. A new remote app download and automatic update PR have not been verified on GitHub. The local app is development-signed and not notarized; no binary release was published. Official UI and real-account checks remain separate work. Review was performed by the implementing agent, without an independent reviewer.
+
+## Initial product identity validation
 
 The September 13, 2026 validation used this repository's product identity, Swift module names, and `CODEX_TURNRAIL_*` environment variables. The signed app has bundle identifier `com.kosukesaigusa.codex-turnrail` and uses `~/Library/Application Support/Codex Turnrail` for its account registry and authentication homes.
 
@@ -109,7 +128,7 @@ A successful full-workspace run has not been established. The isolated MCP succe
 
 The product now has one root CI entrypoint for app and Engine checks. The required job accepts only explicit success from every dependency. Engine CI builds the CLI, Host, and helpers; runs selected package and core tests; checks Clippy; assembles a runtime; and executes the shared probe. No signing identity or real-account token is needed.
 
-The last hosted attempts before restructuring stopped before runner startup because GitHub reported an account payment or spending-limit restriction. No workflow steps ran. The new repository's hosted result must be checked independently. Local validation cannot establish hosted CI success; a successful run remains outstanding.
+The private-repository attempts stopped before runner startup because GitHub reported an account payment or spending-limit restriction. No workflow steps ran in those attempts. Current results are recorded per commit in [GitHub Actions](https://github.com/kosukesaigusa/codex-turnrail/actions/workflows/ci.yml). A release tag requires successful hosted CI for that exact main revision; local validation does not replace this check.
 
 ## Management UI and preservation
 
@@ -122,7 +141,7 @@ Before and after that inspection, the registry remained schema 3 with the same r
 - Installation of the updated package in place of `0.8.0 (24)`.
 - Official Codex UI turns and account switching with the updated runtime.
 - Real browser login, reauthentication, logout, and removal.
-- Successful hosted CI execution.
+- A hosted Draft Release build with Developer ID credentials.
 - A successful full Rust workspace run and resolution of its remaining failures.
 - Independent review.
 - Developer ID signing, notarization, and external distribution.

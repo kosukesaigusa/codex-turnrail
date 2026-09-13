@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified for Codex Turnrail.
 
 """Verify that codex-rs Cargo manifests follow workspace manifest policy.
 

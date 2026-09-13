@@ -40,7 +40,20 @@ class UpstreamTests(unittest.TestCase):
         (engine / "custom.txt").write_text("account routing\n")
         (self.product / "README.md").write_text("# Product\n")
         (self.product / "upstream.toml").write_bytes(
-            sync_upstream.metadata_bytes(str(self.upstream), "rust-v1.0.0", self.base)
+            sync_upstream.metadata_bytes(
+                {
+                    "codex": {
+                        "repository": str(self.upstream),
+                        "tag": "rust-v1.0.0",
+                        "commit": self.base,
+                    },
+                    "app": {
+                        "bundle_identifier": "com.openai.codex",
+                        "version": "1.0.0",
+                        "build": "1",
+                    },
+                }
+            )
         )
         self.commit(self.product)
 
@@ -101,7 +114,12 @@ class UpstreamTests(unittest.TestCase):
                     "repository": str(self.upstream),
                     "tag": "rust-v2.0.0",
                     "commit": incoming,
-                }
+                },
+                "app": {
+                    "bundle_identifier": "com.openai.codex",
+                    "version": "1.0.0",
+                    "build": "1",
+                },
             },
         )
 
@@ -131,9 +149,7 @@ class UpstreamTests(unittest.TestCase):
     def test_missing_provenance_rejects_the_update_before_fetching(self):
         (self.product / "upstream.toml").write_text('[codex]\ntag = "rust-v1.0.0"\n')
         self.commit(self.product)
-        with self.assertRaisesRegex(
-            sync_upstream.UpstreamError, "repository, tag, and commit"
-        ):
+        with self.assertRaisesRegex(ValueError, "exactly"):
             sync_upstream.update(self.product, "rust-v2.0.0")
         self.assertFalse((self.product / ".git/FETCH_HEAD").exists())
 

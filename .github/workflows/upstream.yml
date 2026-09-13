@@ -1,0 +1,124 @@
+name: Codex upstream
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-upstream
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      candidate: ${{ steps.candidate.outputs.available }}
+      revision: ${{ steps.revision.outputs.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Record the observed source revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Observe app and stable CLI releases
+        id: scan
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/upstream_watch.py scan "$RUNNER_TEMP/upstream.json"
+      - name: Maintain the upstream tracking issue
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/upstream_watch.py report "$RUNNER_TEMP/upstream.json" --repository "$GITHUB_REPOSITORY"
+      - name: Select an unreviewed app candidate
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from upstream_watch import app_candidate, github
+          data = json.loads((Path(os.environ["RUNNER_TEMP"]) / "upstream.json").read_text())
+          available = app_candidate(data)
+          if available:
+              repo = os.environ["GITHUB_REPOSITORY"]
+              branch = "upstream/codex-app-" + data["app"]["build"]
+              available = not github(f"repos/{repo}/pulls?state=all&head={repo.split('/')[0]}:{branch}")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as out:
+              out.write(f"available={str(available).lower()}\n")
+          PY
+      - name: Retain observation data
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: upstream-observation
+          path: ${{ runner.temp }}/upstream.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Reject incomplete monitoring
+        if: ${{ steps.scan.outcome == 'failure' }}
+        run: exit 1
+
+  candidate:
+    needs: observe
+    if: ${{ !cancelled() && needs.observe.outputs.candidate == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      issues: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.observe.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Download the observation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name upstream-observation --dir "$RUNNER_TEMP/observation"
+      - name: Configure the automation identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          gh auth setup-git
+      - name: Inspect and prepare the upstream PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prepare_upstream.py "$RUNNER_TEMP/observation/upstream.json" --repository "$GITHUB_REPOSITORY" --publish
+      - name: Record candidate preparation failure
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from upstream_watch import update_issue
+          data = json.loads((Path(os.environ["RUNNER_TEMP"]) / "observation/upstream.json").read_text())
+          repo = os.environ["GITHUB_REPOSITORY"]
+          run = os.environ["GITHUB_RUN_ID"]
+          data["errors"]["candidate"] = f"Preparation stopped; inspect https://github.com/{repo}/actions/runs/{run}."
+          update_issue(repo, data)
+          PY

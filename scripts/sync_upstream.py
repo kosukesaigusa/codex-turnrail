@@ -2,13 +2,11 @@
 """Merge a pinned Codex release into engine without committing product changes."""
 
 import argparse
-import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
-import tomllib
+from project_metadata import metadata_bytes, read_upstream, version_tuple
 
 
 class UpstreamError(Exception):
@@ -26,32 +24,6 @@ def git(root, *arguments, input_bytes=None):
     if result.returncode:
         raise UpstreamError(result.stderr.decode().strip())
     return result.stdout
-
-
-def read_upstream(root):
-    metadata = tomllib.loads((root / "upstream.toml").read_text())
-    if set(metadata) != {"codex"} or set(metadata["codex"]) != {
-        "repository",
-        "tag",
-        "commit",
-    }:
-        raise UpstreamError(
-            "upstream.toml must contain the Codex repository, tag, and commit."
-        )
-    codex = metadata["codex"]
-    if any(not isinstance(value, str) or not value for value in codex.values()):
-        raise UpstreamError("Upstream provenance values must be nonempty strings.")
-    if re.fullmatch(r"[0-9a-f]{40}", codex["commit"]) is None:
-        raise UpstreamError("The upstream commit must be a full Git commit SHA.")
-    return codex
-
-
-def metadata_bytes(repository, tag, commit):
-    values = {"repository": repository, "tag": tag, "commit": commit}
-    return (
-        "[codex]\n"
-        + "".join(f"{key} = {json.dumps(value)}\n" for key, value in values.items())
-    ).encode()
 
 
 def product_tree(root, head, engine_tree, metadata_blob):
@@ -90,11 +62,13 @@ def require_clean(root):
 def update(root, tag):
     require_clean(root)
     head = git(root, "rev-parse", "HEAD").decode().strip()
-    codex = read_upstream(root)
+    metadata = read_upstream(root)
+    codex = metadata["codex"]
     if not tag.startswith("rust-v"):
         raise UpstreamError(
             "Select an upstream Codex release tag beginning with rust-v."
         )
+    version_tuple(tag.removeprefix("rust-v"))
     git(root, "check-ref-format", f"refs/tags/{tag}")
 
     # Fetch objects without adding an upstream remote or changing local tag refs.
@@ -118,13 +92,17 @@ def update(root, tag):
     incoming = git(root, "rev-parse", "FETCH_HEAD^{commit}").decode().strip()
 
     current_metadata = git(root, "rev-parse", f"{head}:upstream.toml").decode().strip()
+    incoming_values = {
+        **metadata,
+        "codex": {"repository": codex["repository"], "tag": tag, "commit": incoming},
+    }
     incoming_metadata = (
         git(
             root,
             "hash-object",
             "-w",
             "--stdin",
-            input_bytes=metadata_bytes(codex["repository"], tag, incoming),
+            input_bytes=metadata_bytes(incoming_values),
         )
         .decode()
         .strip()

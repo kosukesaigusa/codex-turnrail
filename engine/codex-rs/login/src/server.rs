@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 //! Local OAuth callback server for CLI login.
 //!
 //! This module runs the short-lived localhost server used by interactive sign-in.

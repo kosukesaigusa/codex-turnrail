@@ -27,10 +27,11 @@ def available_space():
     return free
 
 
-def require_space():
-    if available_space() < MIN_FREE_BYTES:
+def require_space(minimum):
+    if available_space() < minimum:
         raise StoragePolicyError(
-            "At least 30 GiB must be available before starting a build, test, or lint. "
+            f"At least {minimum // 1024**3} GiB must be available "
+            "before starting a build, test, or lint. "
             "Finish active development commands, then run just finish."
         )
 
@@ -121,6 +122,31 @@ def swift_command(arguments):
     return ["swift", arguments[0], "--package-path", str(APP_ROOT), *arguments[1:]]
 
 
+def release_command(arguments):
+    """Build the two distribution binaries with the upstream release profile."""
+    if arguments:
+        raise StoragePolicyError(
+            "The distribution build does not accept Cargo overrides."
+        )
+    return [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release",
+        "--target",
+        "aarch64-apple-darwin",
+        "-p",
+        "codex-cli",
+        "-p",
+        "codex-code-mode-host",
+        "--bin",
+        "codex",
+        "--bin",
+        "codex-code-mode-host",
+    ]
+
+
 def finish():
     if (
         not (APP_ROOT / "Package.swift").is_file()
@@ -156,24 +182,39 @@ def finish():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--ci",
+        action="store_true",
+        help="Use the explicit ephemeral-runner storage policy.",
+    )
     commands = parser.add_subparsers(dest="action", required=True)
     commands.add_parser("storage")
     cargo = commands.add_parser("cargo")
     cargo.add_argument("arguments", nargs=argparse.REMAINDER)
+    release = commands.add_parser("release-build")
+    release.add_argument("arguments", nargs=argparse.REMAINDER)
     swift = commands.add_parser("swift")
     swift.add_argument("arguments", nargs=argparse.REMAINDER)
     commands.add_parser("finish")
     args = parser.parse_args()
     try:
+        if args.ci and (
+            "GITHUB_ACTIONS" not in os.environ or os.environ["GITHUB_ACTIONS"] != "true"
+        ):
+            raise StoragePolicyError("--ci requires an actual GitHub Actions runner.")
         if args.action == "storage":
-            require_space()
+            require_space(MIN_FREE_BYTES)
             return 0
         with workspace_lock():
             if args.action == "finish":
                 finish()
             else:
-                if args.action == "cargo":
-                    command = cargo_command(args.arguments)
+                if args.action in {"cargo", "release-build"}:
+                    command = (
+                        cargo_command(args.arguments)
+                        if args.action == "cargo"
+                        else release_command(args.arguments)
+                    )
                     environment = cargo_environment(os.environ)
                     working_directory = RUST_ROOT
                     is_test = args.arguments[:2] == ["nextest", "run"]
@@ -190,7 +231,7 @@ def main():
                             "Turnrail tests: removed inherited account routing.",
                             flush=True,
                         )
-                require_space()
+                require_space(5 * 1024**3 if args.ci else MIN_FREE_BYTES)
                 subprocess.run(
                     command, cwd=working_directory, env=environment, check=True
                 )

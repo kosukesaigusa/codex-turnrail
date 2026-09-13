@@ -12,14 +12,16 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package_directory", type=Path)
+    parser.add_argument("profile", choices=("dev-small", "release"))
+    parser.add_argument("--ci", action="store_true")
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     engine = repository / "engine"
     package = args.package_directory
     if not package.is_absolute():
         parser.error(f"Path must be absolute: {package}")
-    if platform.system() != "Darwin":
-        parser.error("Codex Turnrail requires macOS.")
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        parser.error("Codex Turnrail requires Apple silicon macOS.")
     if package.exists():
         parser.error(f"Package output already exists: {package}")
     for generated in (
@@ -43,13 +45,24 @@ def main():
 
     target = default_target()
     just = ["just", "--justfile", str(engine / "justfile")]
-    subprocess.run([*just, "storage"], check=True)
+    if args.ci:
+        if args.profile != "release":
+            parser.error("The CI distribution path requires the release profile.")
+        if "GITHUB_ACTIONS" not in os.environ or os.environ["GITHUB_ACTIONS"] != "true":
+            parser.error("--ci requires a GitHub Actions runner.")
+    else:
+        subprocess.run([*just, "storage"], check=True)
     environment = {
         **os.environ,
         **resolve_codex_v8_cargo_env(TARGET_SPECS[target]),
     }
-    subprocess.run(
-        [
+    if args.profile == "release":
+        build = [sys.executable, str(repository / "scripts/dev.py")]
+        if args.ci:
+            build.append("--ci")
+        build.append("release-build")
+    else:
+        build = [
             *just,
             "build",
             "--locked",
@@ -63,11 +76,9 @@ def main():
             "codex",
             "--bin",
             "codex-code-mode-host",
-        ],
-        env=environment,
-        check=True,
-    )
-    binaries = engine / "codex-rs/target" / target / "dev-small"
+        ]
+    subprocess.run(build, env=environment, check=True)
+    binaries = engine / "codex-rs/target" / target / args.profile
     subprocess.run(
         [
             *just,

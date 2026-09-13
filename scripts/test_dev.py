@@ -150,6 +150,31 @@ class StoragePolicyTests(unittest.TestCase):
                 self.assertEqual(self.invoke("cargo", "build", *arguments), 1)
         self.process.assert_not_called()
 
+    def test_distribution_build_uses_an_explicit_fixed_release_profile(self):
+        self.assertEqual(self.invoke("release-build"), 0)
+        command = self.process.call_args.args[0]
+        self.assertEqual(command[command.index("--profile") + 1], "release")
+        self.assertEqual(command[command.index("--target") + 1], "aarch64-apple-darwin")
+        self.assertEqual(self.process.call_args.kwargs["env"]["CARGO_INCREMENTAL"], "0")
+        self.assertFalse(self.lock.exists())
+
+    def test_distribution_profile_overrides_cannot_start_a_build(self):
+        with self.assertRaises(SystemExit) as error:
+            self.invoke("release-build", "--release")
+        self.assertEqual(error.exception.code, 2)
+        self.process.assert_not_called()
+
+    def test_ci_storage_policy_cannot_be_selected_outside_actions(self):
+        self.assertEqual(self.invoke("--ci", "release-build"), 1)
+        self.process.assert_not_called()
+
+    def test_ci_uses_its_explicit_reserve_and_retains_the_lock(self):
+        self.space.return_value.free = 6 * 1024**3
+        with patch.dict(policy.os.environ, {"GITHUB_ACTIONS": "true"}):
+            self.assertEqual(self.invoke("--ci", "release-build"), 0)
+        self.assertFalse(self.lock.exists())
+        self.assertEqual(self.process.call_args.kwargs["env"]["CARGO_INCREMENTAL"], "0")
+
     def test_application_flags_are_forwarded_after_separator(self):
         arguments = ["run", "--bin", "codex", "--", "--profile", "my-settings"]
         self.assertEqual(

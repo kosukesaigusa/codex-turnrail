@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 use super::*;
 use codex_core::config::permission_profile_catalog;
 use codex_hooks::HookListEntryHandler;

@@ -25,8 +25,8 @@ fix-engine *args:
     just --justfile "{{ engine_justfile }}" fix "$@"
 
 # Build the complete Engine runtime into an explicit output directory.
-build-runtime output:
-    python3 "{{ root }}/scripts/build-runtime.py" "$1"
+build-runtime output profile:
+    python3 "{{ root }}/scripts/build-runtime.py" "$1" "$2"
 
 test-app *args:
     python3 "{{ root }}/scripts/dev.py" swift test "$@"
@@ -48,8 +48,22 @@ test-integration runtime report:
     uv run --frozen --project "{{ root }}/engine/scripts/codex_package/smoke_tests" python "{{ root }}/tests/integration/verify_runtime.py" "$1" "$2"
 
 # Build, sign, and verify the complete app, then clean generated build artifacts.
-package output identity:
-    "{{ root }}/scripts/build-app.sh" "$1" "$2"
+package output identity official_cli profile:
+    "{{ root }}/scripts/build-app.sh" "$1" "$2" "$3" "$4"
+
+metadata-check:
+    python3 "{{ root }}/scripts/project_metadata.py"
+
+metadata-write:
+    python3 "{{ root }}/scripts/project_metadata.py" --write
+
+# Increment the product version and build number without committing or tagging.
+version value:
+    python3 "{{ root }}/scripts/release.py" version "$1"
+
+# Create and push a release tag after successful main CI; use --dry-run to inspect.
+release-tag *args:
+    python3 "{{ root }}/scripts/release_tag.py" --repository kosukesaigusa/codex-turnrail "$@"
 
 sync-upstream tag:
     python3 "{{ root }}/scripts/sync_upstream.py" "$1"

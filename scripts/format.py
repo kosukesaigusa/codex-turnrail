@@ -42,6 +42,8 @@ def main():
             ".prettierrc.toml",
             "../README.md",
             "../AGENTS.md",
+            "../CONTRIBUTING.md",
+            "../SECURITY.md",
             "../docs/**/*.md",
             "../.github/**/*.yml",
             "../.markdownlint-cli2.jsonc",
