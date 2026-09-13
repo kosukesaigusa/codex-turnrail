@@ -6,13 +6,13 @@ Initial releases will use GitHub Releases. Users download the app archive and in
 
 ## Remaining validation
 
-| Work                | Completion criteria                                                                                                                                                                                                    |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hosted CI           | Root product workflows complete successfully on GitHub. The required check rejects failed, skipped, and cancelled dependencies. The previously observed account restriction must be resolved before runners can start. |
-| Full Rust workspace | Classify and resolve the remaining failures, unify required environment conditions, and complete a successful full run. Retain the failed-run record separately from successful isolated reruns.                       |
-| Installed package   | Exit the official app and Engine, install the verified app, and confirm normal launch from the installation path. Preserve account data and conversation history.                                                      |
-| Official UI         | Launch through Turnrail and verify an ordinary turn, JavaScript, Shell, and approval acceptance and rejection with the packaged runtime.                                                                               |
-| Account operations  | Verify history-preserving switching on the next turn, unchanged authentication during active turns, directory rules, login, reauthentication, rejection of a mismatched email, and removal.                            |
+| Work                | Completion criteria                                                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Hosted CI           | Root product workflows complete successfully for the candidate revision. The required check rejects failed, skipped, and cancelled dependencies.                                                 |
+| Full Rust workspace | Classify and resolve the remaining failures, unify required environment conditions, and complete a successful full run. Retain the failed-run record separately from successful isolated reruns. |
+| Installed package   | Exit the official app and Engine, install the verified app, and confirm normal launch from the installation path. Preserve account data and conversation history.                                |
+| Official UI         | Launch through Turnrail and verify an ordinary turn, JavaScript, Shell, and approval acceptance and rejection with the packaged runtime.                                                         |
+| Account operations  | Verify history-preserving switching on the next turn, unchanged authentication during active turns, directory rules, login, reauthentication, rejection of a mismatched email, and removal.      |
 
 The zsh declined-status and parent-authentication reload fixes already pass their targeted tests. Remaining workspace failures and official UI validation have separate completion criteria.
 
