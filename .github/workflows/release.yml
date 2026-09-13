@@ -82,9 +82,12 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
         run: |
-          : "${CERTIFICATE:?Set MACOS_CERTIFICATE_BASE64 in the release environment}"
-          : "${CERTIFICATE_PASSWORD:?Set MACOS_CERTIFICATE_PASSWORD in the release environment}"
-          : "${SIGNING_IDENTITY:?Set MACOS_SIGNING_IDENTITY in the release environment}"
+          for required_key in CERTIFICATE CERTIFICATE_PASSWORD SIGNING_IDENTITY; do
+            if [[ -z "${!required_key}" ]]; then
+              echo "$required_key is required in the release environment." >&2
+              exit 1
+            fi
+          done
           case "$SIGNING_IDENTITY" in
             'Developer ID Application: '*) ;;
             *) echo 'A Developer ID Application identity is required.' >&2; exit 1 ;;
