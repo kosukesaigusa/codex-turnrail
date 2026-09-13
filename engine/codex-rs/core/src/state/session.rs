@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 //! Session-wide mutable state.
 
 use codex_protocol::models::AdditionalPermissionProfile;

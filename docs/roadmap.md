@@ -1,6 +1,6 @@
 # Roadmap
 
-Codex Turnrail is a macOS-only product. The app is at `0.9.0 (25)` with Engine `0.153.4`. Current evidence and its limits are recorded in [Verification](verification.md).
+Codex Turnrail is a macOS-only product preparing its initial `v0.1.0` release. Product and upstream versions are recorded in `packaging/Info.plist` and `upstream.toml`. Current evidence and its limits are recorded in [Verification](verification.md).
 
 Initial releases will use GitHub Releases. Users download the app archive and install updates manually. Windows support, an automatic updater, and a dedicated distribution site are outside the current scope.
 
@@ -18,23 +18,22 @@ The zsh declined-status and parent-authentication reload fixes already pass thei
 
 ## Source publication
 
-- Select the license for the app and product tooling; retain the Engine's Apache-2.0 license, NOTICE, and component licenses.
-- Review the source, assets, and Git history intended for publication.
-- Publish a reviewed revision with its upstream provenance and exact supported official app version.
+- Publish the app and product tooling under Apache-2.0; retain the Engine's license, NOTICE, modification notices, and component licenses.
+- Keep source, assets, Git history, upstream provenance, and exact supported versions reviewed before publication.
 
 ## GitHub Releases
 
-- Define an explicit distribution build profile and verify its finished output. Current packages use the development `dev-small` profile.
-- Include required component license notices in the app.
-- Publish the arm64 app archive, checksum, source revision, upstream revision, build conditions, and runtime verification report together.
+- Configure the signing certificate in the GitHub `release` environment and validate the first hosted Draft Release build.
+- Review bundled component notices for the binary being distributed, including native dependency subcomponents.
+- Complete the manual release checklist, then publish the verified arm64 app archive and its checksum, source and build manifest, and runtime verification report.
 - Document the package's signing status and installation steps, and verify download, extraction, Gatekeeper behavior, first launch, account setup, and official Codex integration on a Mac without development tools.
 
 The official Codex app is installed separately. Compatibility must be revalidated per supported version; the external Engine launch variables are not assumed to remain available indefinitely.
 
-Developer ID signing, notarization, and stapling can be added for broader app distribution later. They are not required to publish the initial source repository or to establish the manual GitHub Releases workflow.
+The Draft Release workflow requires Developer ID Application signing. Notarization and stapling remain work for general binary distribution. Signing credentials are not required to publish the source repository.
 
 ## Ongoing maintenance
 
 Keep upstream updates coordinated with the official CLI version, protocol schema, toolchain, V8 pair, and package behavior. Review automated dependency updates against that constraint rather than independently moving the Engine away from its selected base.
 
-After the first verified release and download test, automate only the repeatable GitHub release steps. Official UI turns and real-account operations remain outside the current PR checks.
+Tag-driven Draft Releases and six-hour upstream monitoring are defined in [Releases](releases.md). Official UI turns and real-account operations remain outside the current PR checks.

@@ -1,6 +1,6 @@
 # Verification
 
-This record distinguishes observed results from work still required before installation and distribution. Codex Turnrail is `0.9.0 (25)`, targeting official Codex `26.903.71938 (8576)` and CLI / Engine `0.153.4`.
+This record distinguishes observed results from work still required before installation and distribution. Current product and supported Codex versions are defined in `packaging/Info.plist` and `upstream.toml`. Historical results below retain the versions that were actually tested.
 
 ## Codex Turnrail validation
 

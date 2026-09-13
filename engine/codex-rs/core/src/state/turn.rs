@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 //! Turn-scoped state and active turn metadata scaffolding.
 
 use crate::tools::ExecApprovalStatus;

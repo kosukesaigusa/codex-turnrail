@@ -63,7 +63,9 @@ jobs:
           python3 engine/scripts/readme_toc.py engine/README.md
 
       - name: Test product tooling
-        run: just test-tools
+        run: |
+          just metadata-check
+          just test-tools
 
       - name: Build and test the app
         run: |

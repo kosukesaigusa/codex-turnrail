@@ -1,7 +1,10 @@
+<!-- Modified for Codex Turnrail. -->
+
 # Turnrail development storage policy
 
 - Use the product root commands documented in `../docs/development.md`. Engine-local `just build`, `just check`, `just test`, `just fix`, and `just clippy` use the same root policy implementation. Do not bypass local checks with direct Cargo build, test, or lint commands.
 - Heavy local commands select `dev-small`, disable incremental compilation, and require at least 30 GiB of available space. Preserve the required test coverage when selecting packages.
+- Distribution packages use the root `just package` command with the explicit `release` profile. That path uses the same lock and storage reserve; ordinary development commands remain on `dev-small`.
 - At task completion, including failed tasks, save logs and required packages outside `codex-rs/target` and `../app/.build`, wait for development processes to end, then run `just --justfile ../justfile finish` from this directory. This cleanup is authorized by the user; do not ask again.
 - Never clean while a development command is active. Before removing an interrupted lock directory, verify that its process has stopped. Preserve source, account data, diagnostics, and packaged apps.
 - The root `just package` command derives both source paths, builds and verifies the signed app, then runs the same cleanup on success.

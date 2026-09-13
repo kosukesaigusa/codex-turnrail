@@ -2,13 +2,23 @@
 
 set -euo pipefail
 
-if [[ "$#" -ne 2 ]]; then
-  echo "usage: $0 /output/directory 'Apple Development: Name (TEAMID)'" >&2
+if [[ "$#" -lt 4 || "$#" -gt 5 ]]; then
+  echo "usage: $0 /output/directory 'Signing Identity' /official/codex dev-small|release [--ci]" >&2
   exit 64
 fi
 
 output_directory="$1"
 signing_identity="$2"
+official_cli="$3"
+build_profile="$4"
+ci_args=()
+if [[ "$#" -eq 5 ]]; then
+  if [[ "$5" != --ci ]]; then
+    echo "unknown packaging option: $5" >&2
+    exit 64
+  fi
+  ci_args=(--ci)
+fi
 script_directory="${0:A:h}"
 repository_root="${script_directory:h}"
 engine_repository="$repository_root/engine"
@@ -55,8 +65,15 @@ if [[ ! -f "$app_icon" ]]; then
   exit 66
 fi
 
-official_cli="/Applications/ChatGPT.app/Contents/Resources/codex"
 code_mode_host_entitlements="$repository_root/packaging/entitlements/codex-code-mode-host.entitlements"
+
+if [[ "$build_profile" != dev-small && "$build_profile" != release ]]; then
+  echo "build profile must be dev-small or release" >&2
+  exit 64
+fi
+
+python3 "$script_directory/project_metadata.py"
+python3 "$script_directory/release.py" check-cli "$official_cli"
 
 if [[ ! -x "$official_cli" ]]; then
   echo "Official Codex CLI is not executable: $official_cli" >&2
@@ -76,17 +93,18 @@ contents="$staging_app/Contents"
 
 mkdir -p "$contents/MacOS" "$contents/Resources"
 runtime_package="$contents/Resources/engine"
-python3 "$script_directory/build-runtime.py" "$runtime_package"
+python3 "$script_directory/build-runtime.py" "$runtime_package" "$build_profile" "${ci_args[@]}"
 
 "$script_directory/verify-protocol-compatibility.sh" "$official_cli" "$runtime_package/bin/codex"
 
-just --justfile "$repository_root/justfile" build-app
+python3 "$script_directory/dev.py" "${ci_args[@]}" swift build -c release
 
 /usr/bin/ditto \
   "$app_directory/.build/release/CodexTurnrailApp" \
   "$contents/MacOS/CodexTurnrailApp"
 /usr/bin/ditto "$repository_root/packaging/Info.plist" "$contents/Info.plist"
 /usr/bin/ditto "$app_icon" "$contents/Resources/AppIcon.icns"
+python3 "$script_directory/build_notices.py" "$contents/Resources/Licenses"
 
 for runtime_binary in bin/codex codex-path/rg codex-resources/zsh/bin/zsh; do
   /usr/bin/codesign \
@@ -118,6 +136,7 @@ UV_PROJECT_ENVIRONMENT="$staging_root/python-venv" uv sync \
   --project "$engine_repository/scripts/codex_package/smoke_tests" --frozen
 "$staging_root/python-venv/bin/python" "$repository_root/tests/integration/verify_runtime.py" \
   "$output_app/Contents/Resources/engine" "$output_directory/runtime-verification.json"
+python3 "$script_directory/release.py" record "$output_directory" "$build_profile"
 
 just --justfile "$repository_root/justfile" finish
 

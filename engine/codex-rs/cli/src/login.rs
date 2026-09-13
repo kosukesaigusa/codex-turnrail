@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 //! CLI login commands and their direct-user observability surfaces.
 //!
 //! The TUI path already installs a broader tracing stack with feedback, OpenTelemetry, and other

@@ -2,3 +2,8 @@
 repository = "https://github.com/openai/codex.git"
 tag = "rust-v0.153.4"
 commit = "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a"
+
+[app]
+bundle_identifier = "com.openai.codex"
+version = "26.903.71938"
+build = "8576"

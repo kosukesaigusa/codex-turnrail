@@ -1,3 +1,4 @@
+# Modified for Codex Turnrail.
 set working-directory := "codex-rs"
 set positional-arguments
 export CODEX_REPO_ROOT := justfile_directory()

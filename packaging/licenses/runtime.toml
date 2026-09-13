@@ -1,0 +1,8 @@
+[v8]
+version = "150.4.0"
+rusty_v8_commit = "5c15a6995c9bb4bacd3e341b59fff32c909c80bf"
+v8_commit = "ac1e23989121713ca642f6650b34deff7b686896"
+
+[zsh]
+archive_sha256 = "49dec9832379688c9090666694a3449502ac5ebd4d76b9ffde1d0999cd088205"
+source_commit = "77045ef899e53b9598bebc5a41db93a548a40ca6"

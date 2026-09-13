@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 use super::residency::is_v2_resident_session_source;
 use super::*;
 use crate::agent::role::apply_role_to_config;

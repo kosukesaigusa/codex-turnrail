@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 //! In-process app-server runtime host for local embedders.
 //!
 //! This module runs the existing [`MessageProcessor`] and outbound routing logic
