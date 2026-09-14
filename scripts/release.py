@@ -15,7 +15,7 @@ from pathlib import Path
 
 import notarization
 from project_metadata import ROOT, cli_version, product_version, validate, version_tuple
-from upstream_watch import github
+from upstream_watch import github, source_release
 
 APP_NAME = "Codex Turnrail.app"
 RUNTIME_BINARIES = (
@@ -67,9 +67,7 @@ def download_cli(output, metadata):
         raise ValueError(
             "The official release tag no longer matches the pinned source commit."
         )
-    release = github(f"repos/openai/codex/releases/tags/{tag}")
-    if release["draft"] or release["prerelease"]:
-        raise ValueError("An official stable CLI release is required.")
+    release = source_release(tag)
     name = "codex-aarch64-apple-darwin.tar.gz"
     assets = [asset for asset in release["assets"] if asset["name"] == name]
     if len(assets) != 1:

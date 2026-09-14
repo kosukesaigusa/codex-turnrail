@@ -30,12 +30,16 @@ class CandidateTests(unittest.TestCase):
             for name, value in members.items():
                 archive.writestr(name, value)
         self.candidate["size"] = len(buffer.getvalue())
-        return io.BytesIO(buffer.getvalue())
+
+        def download(url, destination, **kwargs):
+            destination.write_bytes(buffer.getvalue())
+
+        return download
 
     def test_archive_cannot_write_outside_the_inspection_directory(self):
         archive = self.archive({"../../escaped": "unsafe"})
         with (
-            patch.object(prepare.urllib.request, "urlopen", return_value=archive),
+            patch.object(prepare, "download_app_file", side_effect=archive),
             patch.object(prepare.subprocess, "run") as sign,
             self.assertRaisesRegex(ValueError, "Unsafe path"),
         ):
@@ -46,7 +50,7 @@ class CandidateTests(unittest.TestCase):
     def test_untrusted_signature_prevents_cli_execution(self):
         archive = self.archive({"ChatGPT.app/Contents/Info.plist": b"fixture"})
         with (
-            patch.object(prepare.urllib.request, "urlopen", return_value=archive),
+            patch.object(prepare, "download_app_file", side_effect=archive),
             patch.object(
                 prepare.subprocess,
                 "run",
@@ -68,13 +72,48 @@ class CandidateTests(unittest.TestCase):
         )
         archive = self.archive({"ChatGPT.app/Contents/Info.plist": plist})
         with (
-            patch.object(prepare.urllib.request, "urlopen", return_value=archive),
+            patch.object(prepare, "download_app_file", side_effect=archive),
             patch.object(prepare.subprocess, "run"),
             patch.object(prepare.subprocess, "check_output") as cli,
             self.assertRaisesRegex(ValueError, "metadata"),
         ):
             prepare.inspect_app(self.candidate, self.root)
         cli.assert_not_called()
+
+    def test_signed_official_app_can_select_its_exact_prerelease_cli(self):
+        plist = plistlib.dumps(
+            {
+                "CFBundleIdentifier": "com.openai.codex",
+                "CFBundleShortVersionString": self.candidate["version"],
+                "CFBundleVersion": self.candidate["build"],
+            }
+        )
+        archive = self.archive({"ChatGPT.app/Contents/Info.plist": plist})
+        with (
+            patch.object(prepare, "download_app_file", side_effect=archive),
+            patch.object(prepare.subprocess, "run") as signature,
+            patch.object(
+                prepare.subprocess,
+                "check_output",
+                return_value="codex-cli 0.154.0-alpha.6.2\n",
+            ),
+        ):
+            self.assertEqual(
+                prepare.inspect_app(self.candidate, self.root),
+                "rust-v0.154.0-alpha.6.2",
+            )
+        signature.assert_called_once()
+
+    def test_unpublished_source_stops_before_the_engine_merge(self):
+        with (
+            patch.object(
+                prepare, "source_release", side_effect=ValueError("No matching release")
+            ),
+            patch.object(prepare, "update") as merge,
+            self.assertRaisesRegex(ValueError, "No matching release"),
+        ):
+            prepare.prepare(self.root, self.candidate, "rust-v0.154.0-alpha.6.2")
+        merge.assert_not_called()
 
     def test_existing_pr_never_changes_or_pushes_a_branch(self):
         with (

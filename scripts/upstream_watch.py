@@ -6,11 +6,18 @@ import json
 import re
 import subprocess
 import sys
-import urllib.request
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from project_metadata import ROOT, VERSION, read_upstream, version_tuple
+from project_metadata import (
+    ROOT,
+    VERSION,
+    codex_version,
+    codex_version_key,
+    read_upstream,
+    version_tuple,
+)
 
 APPCAST_URL = "https://persistent.oaistatic.com/codex-app-prod/appcast.xml"
 SPARKLE = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
@@ -32,12 +39,59 @@ def github(endpoint, *, method="GET", payload=None):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+def download_app_file(url, destination, *, max_bytes, timeout):
+    if destination.exists():
+        raise ValueError("The official app download destination already exists.")
+    result = subprocess.run(
+        [
+            "curl",
+            "--disable",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--proto",
+            "=https",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            str(timeout),
+            "--max-filesize",
+            str(max_bytes),
+            "--output",
+            str(destination),
+            "--write-out",
+            "%{http_code}",
+            "--url",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        raise ValueError(f"Official app download failed: {result.stderr.strip()}")
+    if result.stdout != "200":
+        raise ValueError(f"Official app download returned HTTP {result.stdout}.")
+    if not 0 < destination.stat().st_size <= max_bytes:
+        raise ValueError("The official app download has an invalid size.")
+
+
 def fetch_appcast():
-    with urllib.request.urlopen(APPCAST_URL, timeout=30) as response:
-        data = response.read(2 * 1024 * 1024 + 1)
-    if len(data) > 2 * 1024 * 1024:
-        raise ValueError("The Codex appcast exceeds the expected size limit.")
+    with tempfile.TemporaryDirectory(prefix="turnrail-appcast-") as temporary:
+        destination = Path(temporary) / "appcast.xml"
+        download_app_file(
+            APPCAST_URL, destination, max_bytes=2 * 1024 * 1024, timeout=30
+        )
+        data = destination.read_bytes()
     return parse_appcast(data)
+
+
+def source_release(tag):
+    codex_version(tag)
+    release = github(f"repos/openai/codex/releases/tags/{tag}")
+    if release["draft"] is not False or release["tag_name"] != tag:
+        raise ValueError("The candidate CLI has no matching public source release.")
+    return release
 
 
 def parse_appcast(data):
@@ -118,8 +172,8 @@ def report_body(observation):
         lines.append(f"Latest app: [{app['version']} ({app['build']})]({APPCAST_URL}).")
     if observation["cli"] is not None:
         cli = observation["cli"]
-        pending |= version_tuple(cli["tag"][6:]) > version_tuple(
-            supported["codex"]["tag"][6:]
+        pending |= codex_version_key(cli["tag"]) > codex_version_key(
+            supported["codex"]["tag"]
         )
         lines.append(f"Latest stable CLI: [{cli['tag']}]({cli['url']}).")
     for source, error in observation["errors"].items():

@@ -1,7 +1,10 @@
 """Verify update selection, independent failures, and notification deduplication."""
 
 import copy
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import upstream_watch as watch
@@ -70,6 +73,69 @@ class UpstreamWatchTests(unittest.TestCase):
         self.data["cli"]["tag"] = "rust-v9.0.0"
         self.assertTrue(watch.report_body(self.data)[1])
         self.assertFalse(watch.app_candidate(self.data))
+
+    def test_stable_cli_after_the_app_prerelease_remains_a_visible_update(self):
+        self.data["supported"]["codex"]["tag"] = "rust-v0.154.0-alpha.6.2"
+        self.data["cli"]["tag"] = "rust-v0.154.0"
+        self.assertTrue(watch.report_body(self.data)[1])
+        self.assertFalse(watch.app_candidate(self.data))
+
+    def test_public_prerelease_must_have_the_exact_requested_tag(self):
+        tag = "rust-v0.154.0-alpha.6.2"
+        release = {"tag_name": tag, "draft": False, "prerelease": True}
+        with patch.object(watch, "github", return_value=release):
+            self.assertEqual(watch.source_release(tag), release)
+        for invalid in (
+            {**release, "draft": True},
+            {**release, "tag_name": "rust-v0.154.0"},
+        ):
+            with (
+                self.subTest(release=invalid),
+                patch.object(watch, "github", return_value=invalid),
+                self.assertRaisesRegex(ValueError, "matching public source"),
+            ):
+                watch.source_release(tag)
+
+    def test_download_errors_redirects_and_oversize_bodies_are_rejected(self):
+        for status, code, body in (
+            ("403", 22, b"denied"),
+            ("302", 0, b"redirect"),
+            ("200", 0, b"x" * 11),
+            ("200", 0, b""),
+        ):
+            with (
+                self.subTest(status=status, code=code, size=len(body)),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                destination = Path(temporary) / "appcast.xml"
+
+                def curl(command, **kwargs):
+                    destination.write_bytes(body)
+                    return subprocess.CompletedProcess(
+                        command, code, status, "fixture HTTP error"
+                    )
+
+                with (
+                    patch.object(watch.subprocess, "run", side_effect=curl),
+                    self.assertRaises(ValueError),
+                ):
+                    watch.download_app_file(
+                        watch.APPCAST_URL, destination, max_bytes=10, timeout=30
+                    )
+
+    def test_download_preserves_existing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "appcast.xml"
+            destination.write_bytes(b"keep")
+            with (
+                patch.object(watch.subprocess, "run") as curl,
+                self.assertRaisesRegex(ValueError, "already exists"),
+            ):
+                watch.download_app_file(
+                    watch.APPCAST_URL, destination, max_bytes=10, timeout=30
+                )
+            curl.assert_not_called()
+            self.assertEqual(destination.read_bytes(), b"keep")
 
     def test_unchanged_observation_does_not_write_the_tracking_issue(self):
         self.data["errors"]["app"] = "HTTP 403"

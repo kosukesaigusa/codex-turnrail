@@ -1,8 +1,10 @@
 """Exercise release invariants before network publication or binary execution."""
 
+import hashlib
 import io
 import json
 import plistlib
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,23 +86,27 @@ class ReleaseTests(unittest.TestCase):
 
     def test_corrupt_official_download_is_never_executed(self):
         upstream = metadata.read_upstream(metadata.ROOT)
-        responses = [
-            {"object": {"type": "commit", "sha": upstream["codex"]["commit"]}},
-            {
-                "draft": False,
-                "prerelease": False,
-                "assets": [
-                    {
-                        "name": "codex-aarch64-apple-darwin.tar.gz",
-                        "digest": "sha256:" + "0" * 64,
-                        "browser_download_url": "https://example.com/archive",
-                        "size": 3,
-                    }
-                ],
-            },
-        ]
+        source = {
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {
+                    "name": "codex-aarch64-apple-darwin.tar.gz",
+                    "digest": "sha256:" + "0" * 64,
+                    "browser_download_url": "https://example.com/archive",
+                    "size": 3,
+                }
+            ],
+        }
         with (
-            patch.object(release, "github", side_effect=responses),
+            patch.object(
+                release,
+                "github",
+                return_value={
+                    "object": {"type": "commit", "sha": upstream["codex"]["commit"]}
+                },
+            ),
+            patch.object(release, "source_release", return_value=source),
             patch.object(
                 release.urllib.request, "urlopen", return_value=io.BytesIO(b"bad")
             ),
@@ -110,6 +116,65 @@ class ReleaseTests(unittest.TestCase):
             release.download_cli(self.root / "codex", upstream)
         execute.assert_not_called()
         self.assertFalse((self.root / "codex").exists())
+
+    def test_pinned_prerelease_download_keeps_commit_checksum_and_version_gates(self):
+        upstream = metadata.read_upstream(metadata.ROOT)
+        upstream["codex"]["tag"] = "rust-v0.154.0-alpha.6.2"
+        content = b"fixture binary"
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            member = tarfile.TarInfo("codex-aarch64-apple-darwin")
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+        data = buffer.getvalue()
+        source = {
+            "tag_name": upstream["codex"]["tag"],
+            "draft": False,
+            "prerelease": True,
+            "assets": [
+                {
+                    "name": "codex-aarch64-apple-darwin.tar.gz",
+                    "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+                    "browser_download_url": "https://example.com/archive",
+                    "size": len(data),
+                }
+            ],
+        }
+        output = self.root / "codex"
+        with (
+            patch.object(
+                release,
+                "github",
+                return_value={
+                    "object": {"type": "commit", "sha": upstream["codex"]["commit"]}
+                },
+            ),
+            patch.object(release, "source_release", return_value=source) as source_api,
+            patch.object(
+                release.urllib.request, "urlopen", return_value=io.BytesIO(data)
+            ),
+            patch.object(
+                release, "run", return_value="codex-cli 0.154.0-alpha.6.2"
+            ) as execute,
+        ):
+            release.download_cli(output, upstream)
+        source_api.assert_called_once_with("rust-v0.154.0-alpha.6.2")
+        execute.assert_called_once()
+        self.assertEqual(output.read_bytes(), content)
+
+    def test_changed_source_commit_stops_before_downloading_a_release(self):
+        upstream = metadata.read_upstream(metadata.ROOT)
+        with (
+            patch.object(
+                release,
+                "github",
+                return_value={"object": {"type": "commit", "sha": "0" * 40}},
+            ),
+            patch.object(release, "source_release") as source_api,
+            self.assertRaisesRegex(ValueError, "pinned source commit"),
+        ):
+            release.download_cli(self.root / "codex", upstream)
+        source_api.assert_not_called()
 
     def test_latest_exact_revision_ci_must_succeed(self):
         for conclusion, status in (

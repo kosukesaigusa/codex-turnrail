@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from project_metadata import metadata_bytes, read_upstream, version_tuple
+from project_metadata import codex_version, metadata_bytes, read_upstream
 
 
 class UpstreamError(Exception):
@@ -68,7 +68,7 @@ def update(root, tag):
         raise UpstreamError(
             "Select an upstream Codex release tag beginning with rust-v."
         )
-    version_tuple(tag.removeprefix("rust-v"))
+    codex_version(tag)
     git(root, "check-ref-format", f"refs/tags/{tag}")
 
     # Fetch objects without adding an upstream remote or changing local tag refs.

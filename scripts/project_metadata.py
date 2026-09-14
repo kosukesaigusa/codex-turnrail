@@ -13,12 +13,33 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 GENERATED = Path("app/Sources/CodexTurnrailCore/SupportedCodex.generated.swift")
 VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+CODEX_VERSION = rf"{VERSION}(?:-{PRERELEASE_IDENTIFIER}(?:\.{PRERELEASE_IDENTIFIER})*)?"
 
 
 def version_tuple(value):
     if not isinstance(value, str) or re.fullmatch(VERSION, value) is None:
         raise ValueError("A stable major.minor.patch version is required.")
     return tuple(int(part) for part in value.split("."))
+
+
+def codex_version(tag):
+    if not isinstance(tag, str) or re.fullmatch(f"rust-v{CODEX_VERSION}", tag) is None:
+        raise ValueError("The Codex base must be an exact rust-v SemVer release tag.")
+    return tag[6:]
+
+
+def codex_version_key(tag):
+    version, separator, prerelease = codex_version(tag).partition("-")
+    identifiers = (
+        tuple(
+            (0, int(part)) if part.isdigit() else (1, part)
+            for part in prerelease.split(".")
+        )
+        if separator
+        else ()
+    )
+    return (*version_tuple(version), not separator, identifiers)
 
 
 def read_upstream(root):
@@ -38,8 +59,7 @@ def read_upstream(root):
         ):
             raise ValueError("Upstream metadata values must be nonempty strings.")
     codex, app = metadata["codex"], metadata["app"]
-    if re.fullmatch(f"rust-v{VERSION}", codex["tag"]) is None:
-        raise ValueError("The Codex base must be a stable rust-vX.Y.Z release.")
+    codex_version(codex["tag"])
     if re.fullmatch(r"[0-9a-f]{40}", codex["commit"]) is None:
         raise ValueError("The Codex base must be a full Git commit SHA.")
     version_tuple(app["version"])
@@ -57,7 +77,7 @@ def metadata_bytes(metadata):
 
 
 def cli_version(metadata):
-    return "codex-cli " + metadata["codex"]["tag"].removeprefix("rust-v")
+    return "codex-cli " + codex_version(metadata["codex"]["tag"])
 
 
 def supported_swift(metadata):
