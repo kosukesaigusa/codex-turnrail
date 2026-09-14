@@ -42,10 +42,17 @@ struct OnboardingTests {
     #expect(commands[0].environment["CODEX_HOME"] != commands[1].environment["CODEX_HOME"])
   }
 
-  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-  func cancellationAfterBrowserCompletionDoesNotRegisterTheTemporaryAccount(readFails: Bool)
-    async throws
-  {
+  @Test(.timeLimit(.minutes(1)))
+  func cancellationAfterBrowserCompletionDoesNotRegisterTheTemporaryAccount() async throws {
+    try await checkCancellationDuringIdentityRead(readFails: false)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func cancellationDuringAFailedIdentityReadDoesNotRegisterTheTemporaryAccount() async throws {
+    try await checkCancellationDuringIdentityRead(readFails: true)
+  }
+
+  private func checkCancellationDuringIdentityRead(readFails: Bool) async throws {
     let fixture = try OnboardingFixture()
     defer { fixture.remove() }
     let identityGate = PendingIdentity()
