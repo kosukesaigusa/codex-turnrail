@@ -61,7 +61,7 @@ metadata-write:
 version value:
     python3 "{{ root }}/scripts/release.py" version "$1"
 
-# Create and push a release tag after successful main CI; use --dry-run to inspect.
+# Tag verified main and dispatch its release build; use --dry-run to inspect.
 release-tag *args:
     python3 "{{ root }}/scripts/release_tag.py" --repository kosukesaigusa/codex-turnrail "$@"
 

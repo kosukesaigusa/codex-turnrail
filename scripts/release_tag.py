@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a release tag only for a clean main revision with successful CI."""
+"""Tag a verified main revision and dispatch its release build from main."""
 
 import argparse
 import subprocess
@@ -66,6 +66,22 @@ def main():
                 ["git", "-C", str(ROOT), "push", "origin", f"refs/tags/{tag}"],
                 check=True,
             )
+            subprocess.run(
+                [
+                    "gh",
+                    "workflow",
+                    "run",
+                    "release.yml",
+                    "--repo",
+                    args.repository,
+                    "--ref",
+                    "main",
+                    "--field",
+                    f"tag={tag}",
+                ],
+                check=True,
+            )
+            print(f"Dispatched the main release workflow for {tag}.")
         return 0
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         print(f"Release tagging failed: {error}", file=sys.stderr)

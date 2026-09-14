@@ -1,0 +1,37 @@
+name: Release build benchmarks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turnrail-release-benchmarks
+  cancel-in-progress: false
+
+jobs:
+  cold-two:
+    name: Cold build with two workers
+    uses: ./.github/workflows/release-build-check.yml
+    with:
+      build_jobs: 2
+      cache_state: cold
+      save_cache: true
+
+  cold-three:
+    name: Cold build with three workers
+    uses: ./.github/workflows/release-build-check.yml
+    with:
+      build_jobs: 3
+      cache_state: cold
+      save_cache: false
+
+  warm-two:
+    name: Warm build with two workers
+    needs: cold-two
+    uses: ./.github/workflows/release-build-check.yml
+    with:
+      build_jobs: 2
+      cache_state: warm
+      save_cache: false

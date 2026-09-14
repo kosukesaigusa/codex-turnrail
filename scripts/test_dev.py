@@ -154,6 +154,7 @@ class StoragePolicyTests(unittest.TestCase):
         self.assertEqual(self.invoke("release-build"), 0)
         command = self.process.call_args.args[0]
         self.assertEqual(command[command.index("--profile") + 1], "release")
+        self.assertIn("--timings", command)
         self.assertEqual(command[command.index("--target") + 1], "aarch64-apple-darwin")
         self.assertEqual(self.process.call_args.kwargs["env"]["CARGO_INCREMENTAL"], "0")
         self.assertFalse(self.lock.exists())

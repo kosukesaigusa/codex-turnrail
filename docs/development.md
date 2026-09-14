@@ -93,9 +93,9 @@ The package command:
 5. Verifies the signatures and executes the integration probe against the finished app.
 6. Saves the app, runtime report, and build manifest, then cleans generated build artifacts.
 
-Success requires every step. An output created before a failure is not a verified app. Existing output apps are never overwritten. The signer is explicit; notarization is not implemented. See [Releases](releases.md) for tagging, Draft Releases, signing setup, and manual publication checks.
+Success requires every step. An output created before a failure is not a verified app. Existing output apps are never overwritten. The signer is explicit. See [Releases](releases.md) for tagging, signed and notarized Draft Releases, and manual publication checks.
 
-The GitHub release job calls the same packaging script with explicit `--ci`. That mode requires `GITHUB_ACTIONS=true`, retains the shared lock and disabled incremental compilation, and uses a 5 GiB reserve on an ephemeral runner. Local builds retain the 30 GiB reserve. The reserve is not a guarantee that compilation will fit the available disk.
+The GitHub release job calls the same packaging script with explicit `--ci`. That mode requires `GITHUB_ACTIONS=true`, retains the shared lock and disabled incremental compilation, and uses a 5 GiB reserve on an ephemeral runner. It leaves generated build files for the workflow to save timing reports and the compilation cache before its final cleanup step. Local packaging retains automatic cleanup and the 30 GiB reserve. The reserve is not a guarantee that compilation will fit the available disk.
 
 Replace an installed app only after the official Codex app and its Engine have exited. A running Engine may still load resources from its existing bundle path.
 

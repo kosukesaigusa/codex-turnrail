@@ -17,6 +17,10 @@ if [[ "$#" -eq 5 ]]; then
     echo "unknown packaging option: $5" >&2
     exit 64
   fi
+  if [[ ! -v GITHUB_ACTIONS ]] || [[ "$GITHUB_ACTIONS" != true ]]; then
+    echo "--ci requires a GitHub Actions runner." >&2
+    exit 64
+  fi
   ci_args=(--ci)
 fi
 script_directory="${0:A:h}"
@@ -141,6 +145,9 @@ UV_PROJECT_ENVIRONMENT="$staging_root/python-venv" uv sync \
   "$output_app/Contents/Resources/engine" "$output_directory/runtime-verification.json"
 python3 "$script_directory/release.py" record "$output_directory" "$build_profile"
 
-just --justfile "$repository_root/justfile" finish
+# The CI workflow saves build reports and the Cargo cache before its final cleanup.
+if [[ ${#ci_args} -eq 0 ]]; then
+  just --justfile "$repository_root/justfile" finish
+fi
 
 echo "$output_app"

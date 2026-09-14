@@ -105,4 +105,4 @@ Development packages use an explicit Apple Development identity. The Engine, Hos
 
 The finished app is checked with strict signature verification and a local mock-model probe covering JavaScript, parallel tools, packaged binaries, and approval decisions. Its report is saved next to the app. Build artifacts are cleaned after verification. Installation must preserve any runtime path still used by a running official app or Engine.
 
-See [Development](development.md) for build commands and [Verification](verification.md) for observed evidence. Developer ID distribution and notarization remain future work.
+See [Development](development.md) for build commands, [Releases](releases.md) for Developer ID distribution and notarization, and [Verification](verification.md) for observed evidence.

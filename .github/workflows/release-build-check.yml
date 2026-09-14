@@ -1,0 +1,95 @@
+name: Measure release build
+
+on:
+  workflow_call:
+    inputs:
+      build_jobs:
+        type: number
+        required: true
+      cache_state:
+        type: string
+        required: true
+      save_cache:
+        type: boolean
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: ${{ inputs.build_jobs }}
+      CODEX_REPO_ROOT: ${{ github.workspace }}/engine
+      CACHE_STATE: ${{ inputs.cache_state }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require an explicit main benchmark and a cold target directory
+        run: |
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$CACHE_STATE" == cold || "$CACHE_STATE" == warm ]]
+          [[ "$CARGO_BUILD_JOBS" == 2 || "$CARGO_BUILD_JOBS" == 3 ]]
+          [[ ! -e engine/codex-rs/target ]]
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: "1.95.0"
+      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
+        with:
+          tool: just@1.51.0
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.3"
+      - name: Identify the release compiler and source cache
+        id: cache-key
+        run: python3 scripts/release_cache.py >> "$GITHUB_OUTPUT"
+      - name: Require the exact cache from the cold build
+        if: ${{ inputs.cache_state == 'warm' }}
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/codex-rs/target
+          key: ${{ steps.cache-key.outputs.key }}
+          fail-on-cache-miss: true
+      - name: Measure the optimized Engine and Code Mode Host build
+        run: |
+          python3 scripts/measure_release.py "$RUNNER_TEMP/release-build-report" -- \
+            python3 scripts/build-runtime.py "$RUNNER_TEMP/turnrail-runtime" release --ci
+      - name: Verify the measured runtime and approval decisions
+        run: |
+          uv sync --project engine/scripts/codex_package/smoke_tests --frozen
+          engine/scripts/codex_package/smoke_tests/.venv/bin/python \
+            tests/integration/verify_runtime.py \
+            "$RUNNER_TEMP/turnrail-runtime" "$RUNNER_TEMP/runtime-verification.json"
+      - name: Save verified compilation artifacts for the warm build and releases
+        if: ${{ inputs.save_cache }}
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/codex-rs/target
+          key: ${{ steps.cache-key.outputs.key }}
+      - name: Retain measurements and runtime verification
+        if: ${{ always() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: turnrail-release-${{ inputs.cache_state }}-${{ inputs.build_jobs }}
+          path: |
+            ${{ runner.temp }}/release-build-report
+            ${{ runner.temp }}/runtime-verification.json
+          retention-days: 14
+      - name: Clean generated build files after retaining reports and cache
+        if: ${{ always() }}
+        run: python3 scripts/dev.py finish
