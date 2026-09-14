@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import os
 import plistlib
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+import notarization
 from project_metadata import ROOT, cli_version, product_version, validate, version_tuple
 from upstream_watch import github
 
@@ -166,7 +168,7 @@ def record(output, profile):
     (output / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
-def archive(output, tag):
+def validate_distribution(output, tag):
     metadata = validate(ROOT, tag=tag)
     manifest_path = output / "build-manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -177,6 +179,8 @@ def archive(output, tag):
         raise ValueError(
             "Release archives require a release-profile build from committed source."
         )
+    if not manifest["signing_authorities"][0].startswith("Developer ID Application: "):
+        raise ValueError("Distribution requires Developer ID Application signing.")
     if manifest["source_commit"] != run("git", "-C", str(ROOT), "rev-parse", "HEAD"):
         raise ValueError("The app was built from a different source revision.")
     if run("git", "-C", str(ROOT), "status", "--porcelain"):
@@ -195,6 +199,52 @@ def archive(output, tag):
     ):
         raise ValueError("The packaged app version does not match the release.")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+    return manifest
+
+
+def notarize(output, tag):
+    manifest = validate_distribution(output, tag)
+    app = output / APP_NAME
+    executables = [
+        app,
+        *(app / "Contents/Resources/engine" / name for name in RUNTIME_BINARIES),
+    ]
+    for executable in executables:
+        signature = subprocess.run(
+            ["codesign", "--display", "--verbose=4", str(executable)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stderr
+        if not all(
+            value in signature
+            for value in (
+                "Authority=Developer ID Application: ",
+                "(runtime)",
+                "Timestamp=",
+            )
+        ):
+            raise ValueError(
+                "Developer ID signing, hardened runtime, and a timestamp "
+                f"are required: {executable.name}"
+            )
+    notarization.notarize(app, output, os.environ)
+    manifest["notarized"] = True
+    manifest["notarization_report_sha256"] = sha256(output / notarization.REPORT)
+    notarization.write_json(output / "build-manifest.json", manifest)
+
+
+def archive(output, tag):
+    manifest = validate_distribution(output, tag)
+    manifest_path = output / "build-manifest.json"
+    app = output / APP_NAME
+    report = output / "runtime-verification.json"
+    notary_report = output / notarization.REPORT
+    if manifest["notarized"] is not True:
+        raise ValueError("Release archives require a notarized app.")
+    if sha256(notary_report) != manifest["notarization_report_sha256"]:
+        raise ValueError("The notarization report changed after verification.")
+    notarization.verify_report(app, output)
     archive_path = output / f"Codex-Turnrail-{tag}-macos-arm64.zip"
     checksum = output / "SHA256SUMS"
     if archive_path.exists() or checksum.exists():
@@ -213,7 +263,7 @@ def archive(output, tag):
         ],
         check=True,
     )
-    artifacts = [archive_path, manifest_path, report]
+    artifacts = [archive_path, manifest_path, report, notary_report]
     checksum.write_text("".join(f"{sha256(path)}  {path.name}\n" for path in artifacts))
     return [*artifacts, checksum]
 
@@ -227,6 +277,10 @@ def main():
     cli.add_argument("executable", type=Path)
     download = commands.add_parser("download-cli")
     download.add_argument("output", type=Path)
+    commands.add_parser("notary-preflight")
+    notarized = commands.add_parser("notarize")
+    notarized.add_argument("output", type=Path)
+    notarized.add_argument("tag")
     manifest = commands.add_parser("record")
     manifest.add_argument("output", type=Path)
     manifest.add_argument("profile", choices=("dev-small", "release"))
@@ -243,6 +297,10 @@ def main():
             download_cli(args.output, validate(ROOT)["upstream"])
         elif args.action == "record":
             record(args.output, args.profile)
+        elif args.action == "notary-preflight":
+            notarization.preflight(os.environ)
+        elif args.action == "notarize":
+            notarize(args.output, args.tag)
         else:
             for path in archive(args.output, args.tag):
                 print(path)

@@ -110,12 +110,14 @@ for runtime_binary in bin/codex codex-path/rg codex-resources/zsh/bin/zsh; do
   /usr/bin/codesign \
     --force \
     --options runtime \
+    --timestamp \
     --sign "$signing_identity" \
     "$runtime_package/$runtime_binary"
 done
 /usr/bin/codesign \
   --force \
   --options runtime \
+  --timestamp \
   --entitlements "$code_mode_host_entitlements" \
   --sign "$signing_identity" \
   "$runtime_package/bin/codex-code-mode-host"
@@ -125,6 +127,7 @@ done
 /usr/bin/codesign \
   --force \
   --options runtime \
+  --timestamp \
   --sign "$signing_identity" \
   "$staging_app"
 /usr/bin/codesign --verify --deep --strict "$staging_app"
