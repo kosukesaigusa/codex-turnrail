@@ -75,7 +75,41 @@ jobs:
 
       - name: Test the app
         timeout-minutes: 5
-        run: swift test --package-path app --jobs 2 --verbose
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          test = subprocess.Popen(["swift", "test", "--package-path", "app", "--jobs", "2", "--verbose"])
+          try:
+              sys.exit(test.wait(timeout=120))
+          except subprocess.TimeoutExpired:
+              print("App tests exceeded two minutes; collecting process samples.", flush=True)
+              processes = subprocess.check_output(["ps", "-axo", "pid=,ppid=,comm="], text=True)
+              descendants = {test.pid}
+              rows = [line.strip().split(None, 2) for line in processes.splitlines()]
+              while True:
+                  children = {int(pid) for pid, parent, _ in rows if int(parent) in descendants}
+                  expanded = descendants | children
+                  if expanded == descendants:
+                      break
+                  descendants = expanded
+              for pid in sorted(descendants):
+                  report = Path(os.environ["RUNNER_TEMP"]) / f"turnrail-app-tests-{pid}.sample.txt"
+                  subprocess.run(["/usr/bin/sample", str(pid), "2", "-file", str(report)], check=True)
+              sys.exit(test.wait(timeout=30))
+          PY
+
+      - name: Save app test diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: turnrail-app-test-diagnostics
+          path: ${{ runner.temp }}/turnrail-app-tests-*.sample.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Check packaging scripts and metadata
         run: |
