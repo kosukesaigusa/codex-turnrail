@@ -30,12 +30,13 @@ private struct PresentedAccountIssue: Identifiable {
 
 struct TurnrailSettings: View {
   @ObservedObject var model: TurnrailViewModel
+  @Environment(\.openURL) private var openURL
   @State private var page: SettingsPage = .switchAccount
   @State private var expandedFolders: Set<AccountRoutingScope> = [.defaultRule]
   @State private var accountPendingRemoval: TurnrailAccount?
   @State private var folderPendingRemoval: DirectoryAccountRule?
   @State private var presentedAccountIssue: PresentedAccountIssue?
-  @State private var showsStatusDetails = false
+  @State private var presentedStatus: StatusNotice?
 
   var body: some View {
     HStack(spacing: 0) {
@@ -79,10 +80,21 @@ struct TurnrailSettings: View {
       NSWorkspace.shared.notificationCenter.publisher(
         for: NSWorkspace.didTerminateApplicationNotification)
     ) { _ in model.refreshApplicationState() }
-    .alert("Compatibility", isPresented: $showsStatusDetails) {
-      Button("OK", role: .cancel) {}
-    } message: {
-      if let details = model.statusDetails { Text(details) }
+    .alert(item: $presentedStatus) { notice in
+      if let recovery = notice.recovery {
+        Alert(
+          title: Text(notice.title),
+          message: Text(notice.message),
+          primaryButton: .default(Text(recovery.title)) { openURL(recovery.url) },
+          secondaryButton: .cancel(Text("Close"))
+        )
+      } else {
+        Alert(
+          title: Text(notice.title),
+          message: Text(notice.message),
+          dismissButton: .default(Text("OK"))
+        )
+      }
     }
     .alert(
       "Account Error",
@@ -172,9 +184,13 @@ struct TurnrailSettings: View {
     .frame(width: 204, height: 740)
     .background(Color(nsColor: .controlBackgroundColor))
     .overlay(alignment: .bottom) {
-      TurnrailStatusControls(model: model, showsStatusDetails: $showsStatusDetails)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 20)
+      TurnrailStatusControls(
+        model: model,
+        onPrimaryAction: { performPrimaryAction(model.primaryAction) },
+        showNotice: { presentedStatus = $0 }
+      )
+      .padding(.horizontal, 16)
+      .padding(.bottom, 20)
     }
   }
 
@@ -200,15 +216,49 @@ struct TurnrailSettings: View {
       .controlSize(.large)
       .disabled(model.registryLoadError != nil)
     case .accounts:
-      Button {
-        model.addAccount()
-      } label: {
-        Label(model.isAddingAccount ? "Signing In" : "Add Account", systemImage: "plus")
+      if model.isAddingAccount {
+        HStack(spacing: 12) {
+          ProgressView().controlSize(.small)
+          Text(loginProgressTitle)
+          Button("Cancel") { model.cancelSignIn() }
+            .disabled(model.isCancellingLogin || model.isCompletingLogin)
+        }
+        .controlSize(.large)
+      } else {
+        Button {
+          model.addAccount()
+        } label: {
+          Label("Add Account", systemImage: "plus")
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(model.isSigningIn || model.registryLoadError != nil)
       }
-      .buttonStyle(.borderedProminent)
-      .controlSize(.large)
-      .disabled(model.isAddingAccount || model.registryLoadError != nil)
     }
+  }
+
+  private func performPrimaryAction(_ action: TurnrailViewModel.PrimaryAction) {
+    switch action {
+    case .addAccount:
+      page = .accounts
+      model.addAccount()
+    case .assignAccount:
+      page = .folders
+      expandedFolders.insert(model.routingScope)
+    case .signIn:
+      page = .accounts
+    case .openCodex:
+      model.launchCodex()
+      presentedStatus = model.statusNotice
+    case .unavailable:
+      break
+    }
+  }
+
+  private var loginProgressTitle: String {
+    if model.isCancellingLogin { return "Cancelling…" }
+    if model.isCompletingLogin { return "Completing…" }
+    return "Signing In…"
   }
 
   private var switchPage: some View {
@@ -489,13 +539,23 @@ struct TurnrailSettings: View {
                   }
                 }
                 .frame(width: 180, alignment: .leading)
-                Button("Sign In Again") {
-                  model.reauthenticate(accountID: account.id)
+                Group {
+                  if model.activeLogin == .account(account.id) {
+                    Button("Cancel") {
+                      model.cancelSignIn()
+                    }
+                    .disabled(model.isCancellingLogin || model.isCompletingLogin)
+                    .accessibilityLabel("Cancel sign-in to \(account.email)")
+                  } else {
+                    Button("Sign In Again") {
+                      model.reauthenticate(accountID: account.id)
+                    }
+                    .disabled(accountIsBusy(account) || model.isSigningIn)
+                    .accessibilityLabel("Sign in again to \(account.email)")
+                  }
                 }
                 .controlSize(.large)
-                .disabled(accountIsBusy(account))
                 .frame(width: 112)
-                .accessibilityLabel("Sign in again to \(account.email)")
                 Menu {
                   Button("Remove Account", role: .destructive) { accountPendingRemoval = account }
                     .disabled(accountIsBusy(account))
@@ -539,12 +599,13 @@ struct TurnrailSettings: View {
   }
 
   private func connectionStatus(_ account: TurnrailAccount) -> String {
+    if model.activeLogin == .account(account.id) { return loginProgressTitle }
     switch model.authStatusByAccountID[account.id] {
-    case .loggedIn: "Connected"
-    case .loggedOut: "Signed Out"
-    case .loginInProgress: "Signing In"
-    case .checking, nil: "Checking"
-    case .failed: "Account Error"
+    case .loggedIn: return "Connected"
+    case .loggedOut: return "Signed Out"
+    case .loginInProgress: return "Signing In…"
+    case .checking, nil: return "Checking"
+    case .failed: return "Account Error"
     }
   }
 
@@ -638,7 +699,8 @@ extension View {
 
 private struct TurnrailStatusControls: View {
   @ObservedObject var model: TurnrailViewModel
-  @Binding var showsStatusDetails: Bool
+  let onPrimaryAction: () -> Void
+  let showNotice: (StatusNotice) -> Void
 
   var body: some View {
     VStack(spacing: 10) {
@@ -647,23 +709,24 @@ private struct TurnrailStatusControls: View {
         Circle().fill(statusColor).frame(width: 9, height: 9)
         Text(model.statusText)
         Spacer()
-        if model.statusDetails != nil {
-          Button("Details") { showsStatusDetails = true }
+        if let notice = model.statusNotice {
+          Button("Details") { showNotice(notice) }
             .buttonStyle(.link)
         }
       }
       .padding(.bottom, 4)
       Button {
-        model.launchCodex()
+        onPrimaryAction()
       } label: {
-        Text("Open Codex").frame(maxWidth: .infinity)
+        Text(model.primaryAction.title).frame(maxWidth: .infinity)
       }
       .buttonStyle(.borderedProminent)
       .controlSize(.large)
-      .disabled(!model.canLaunch)
+      .disabled(
+        model.primaryAction == .unavailable
+          || (model.primaryAction == .addAccount && model.isSigningIn))
       Button {
-        model.refreshCompatibility()
-        if model.statusDetails != nil { showsStatusDetails = true }
+        showNotice(model.refreshCompatibility())
       } label: {
         Text("Check Compatibility").frame(maxWidth: .infinity)
       }
@@ -674,7 +737,7 @@ private struct TurnrailStatusControls: View {
   }
 
   private var statusColor: Color {
-    if model.statusDetails != nil { return .orange }
+    if model.statusNotice != nil { return .orange }
     if model.isCodexRunning || model.canLaunch { return .green }
     if case .checking = model.state { return .secondary }
     return .orange

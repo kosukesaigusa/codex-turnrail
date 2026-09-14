@@ -26,6 +26,7 @@ struct AccountAuthenticationTests {
       expectedEmail: "registered@example.com",
       inheritedEnvironment: [
         "CODEX_HOME": "/tmp/unrelated/auth-home",
+        "CODEX_TURNRAIL_ROOT": "/tmp/unrelated/routing",
         "CODEX_TURNRAIL_EXPECTED_EMAIL": "unrelated@example.com",
         "PATH": "/usr/bin:/bin",
       ]
@@ -64,7 +65,8 @@ struct AccountAuthenticationTests {
       engineURL: URL(filePath: "/opt/turnrail/codex"),
       authHomeURL: URL(filePath: "/tmp/account/auth-home"),
       inheritedEnvironment: [
-        "CODEX_TURNRAIL_EXPECTED_EMAIL": "unrelated@example.com"
+        "CODEX_TURNRAIL_ROOT": "/tmp/unrelated/routing",
+        "CODEX_TURNRAIL_EXPECTED_EMAIL": "unrelated@example.com",
       ]
     )
 

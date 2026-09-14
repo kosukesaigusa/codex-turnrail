@@ -56,6 +56,7 @@ public enum AccountAuthenticationCommandFactory {
     var environment = inheritedEnvironment
     environment["CODEX_HOME"] = authHomeURL.path
     environment["CODEX_TURNRAIL_EXPECTED_EMAIL"] = expectedEmail
+    environment.removeValue(forKey: "CODEX_TURNRAIL_ROOT")
     return AccountAuthenticationCommand(
       executableURL: engineURL,
       arguments: arguments + ["--config", "cli_auth_credentials_store=\"keyring\""],

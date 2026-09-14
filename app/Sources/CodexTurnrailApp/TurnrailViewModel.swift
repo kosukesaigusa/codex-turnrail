@@ -66,8 +66,30 @@ final class TurnrailViewModel: ObservableObject {
   enum State: Equatable {
     case checking
     case ready(CompatibilityReport)
-    case blocked(String)
+    case blocked(StatusNotice)
     case launched
+  }
+
+  enum LoginTarget: Equatable {
+    case newAccount
+    case account(UUID)
+  }
+
+  enum PrimaryAction: Equatable {
+    case addAccount
+    case assignAccount
+    case signIn
+    case openCodex
+    case unavailable
+
+    var title: String {
+      switch self {
+      case .addAccount: "Add Account"
+      case .assignAccount: "Assign Account"
+      case .signIn: "Sign In"
+      case .openCodex, .unavailable: "Open Codex"
+      }
+    }
   }
 
   @Published private(set) var state: State = .checking
@@ -86,17 +108,36 @@ final class TurnrailViewModel: ObservableObject {
   @Published private(set) var lastUsedByAccountID: [UUID: AccountLastUsedStatus] = [:]
   @Published private(set) var isCodexRunning = false
   @Published private(set) var isRefreshingAccounts = false
-  @Published private(set) var isAddingAccount = false
+  @Published private(set) var activeLogin: LoginTarget?
+  @Published private(set) var isCancellingLogin = false
+  @Published private(set) var isCompletingLogin = false
   @Published private(set) var removingAccountIDs = Set<UUID>()
 
   let appURL = URL(filePath: "/Applications/ChatGPT.app")
   private let commandExecutor: CommandExecutor
+  private let loginExecutor: AccountLoginExecutor
+  private let compatibilityProbe: (URL, URL) throws -> CompatibilityReport
+  private let isApplicationRunning: () -> Bool
   private let identityReader: AccountIdentityReader
   private let usageReader: AccountUsageReader
   private let engineURLResult: Result<URL, Error>
   private let registryStoreResult: Result<AccountRegistryStore, Error>
   private var lastRefreshAt: Date?
   private var operationByAccountID: [UUID: UUID] = [:]
+  private var loginTask: Task<Void, Never>?
+
+  var isAddingAccount: Bool { activeLogin == .newAccount }
+  var isSigningIn: Bool { activeLogin != nil }
+
+  var primaryAction: PrimaryAction {
+    guard registryLoadError == nil, case .ready = state else {
+      return .unavailable
+    }
+    if registryState.accounts.isEmpty { return .addAccount }
+    if registryState.routing.allAllowedAccountIDs.isEmpty { return .assignAccount }
+    if isCodexRunning { return .unavailable }
+    return canLaunch ? .openCodex : .signIn
+  }
 
   var statusText: String {
     if registryLoadError != nil { return "Settings Error" }
@@ -115,9 +156,11 @@ final class TurnrailViewModel: ObservableObject {
     }
   }
 
-  var statusDetails: String? {
-    if let registryLoadError { return registryLoadError }
-    if case .blocked(let message) = state { return message }
+  var statusNotice: StatusNotice? {
+    if let registryLoadError {
+      return StatusNotice(title: "Settings Error", message: registryLoadError, recovery: nil)
+    }
+    if case .blocked(let notice) = state { return notice }
     return nil
   }
 
@@ -148,6 +191,13 @@ final class TurnrailViewModel: ObservableObject {
       engineURLResult: engineURLResult,
       registryStoreResult: registryStoreResult,
       commandExecutor: .live,
+      loginExecutor: .live,
+      compatibilityProbe: { try CompatibilityProbe().probe(appURL: $0, engineURL: $1) },
+      isApplicationRunning: {
+        !NSRunningApplication.runningApplications(
+          withBundleIdentifier: CodexCompatibilityContract.supported.bundleIdentifier
+        ).isEmpty
+      },
       identityReader: .live,
       usageReader: .live
     )
@@ -159,12 +209,18 @@ final class TurnrailViewModel: ObservableObject {
     engineURLResult: Result<URL, Error>,
     registryStoreResult: Result<AccountRegistryStore, Error>,
     commandExecutor: CommandExecutor,
+    loginExecutor: AccountLoginExecutor,
+    compatibilityProbe: @escaping (URL, URL) throws -> CompatibilityReport,
+    isApplicationRunning: @escaping () -> Bool,
     identityReader: AccountIdentityReader,
     usageReader: AccountUsageReader
   ) {
     self.engineURLResult = engineURLResult
     self.registryStoreResult = registryStoreResult
     self.commandExecutor = commandExecutor
+    self.loginExecutor = loginExecutor
+    self.compatibilityProbe = compatibilityProbe
+    self.isApplicationRunning = isApplicationRunning
     self.identityReader = identityReader
     self.usageReader = usageReader
     do {
@@ -178,9 +234,7 @@ final class TurnrailViewModel: ObservableObject {
   }
 
   func refreshApplicationState() {
-    isCodexRunning = !NSRunningApplication.runningApplications(
-      withBundleIdentifier: CodexCompatibilityContract.supported.bundleIdentifier
-    ).isEmpty
+    isCodexRunning = isApplicationRunning()
     if case .launched = state, !isCodexRunning {
       refreshCompatibility()
     }
@@ -194,24 +248,26 @@ final class TurnrailViewModel: ObservableObject {
     accountError = message
   }
 
-  func addAccount() {
-    guard !isAddingAccount, registryLoadError == nil else {
-      return
+  @discardableResult
+  func addAccount() -> Task<Void, Never>? {
+    guard !isSigningIn, registryLoadError == nil else {
+      return nil
     }
-    isAddingAccount = true
+    activeLogin = .newAccount
     accountError = nil
-    Task {
-      defer {
-        isAddingAccount = false
-      }
+    let task = Task {
+      defer { finishLogin() }
       let accountID = UUID()
-      var loginCompleted = false
+      var authenticationStarted = false
       do {
+        try Task.checkCancellation()
         let command = try authenticationCommand(
           forAccountID: accountID,
           action: .login(expectedEmail: nil)
         )
-        let result = try await executeInBackground(command)
+        authenticationStarted = true
+        let result = try await loginExecutor.execute(command)
+        try Task.checkCancellation()
         guard result.exitCode == 0 else {
           throw TurnrailViewModelError.commandFailed(
             operation: "Login",
@@ -219,28 +275,48 @@ final class TurnrailViewModel: ObservableObject {
             output: commandOutput(result)
           )
         }
-        loginCompleted = true
         guard let identity = try await readIdentity(forAccountID: accountID) else {
           throw TurnrailViewModelError.loginCompletedWithoutAccount
         }
+        try Task.checkCancellation()
         registryState = try registryStoreResult.get().registerAccount(
           identity: identity,
           to: registryState,
           id: accountID
         )
         authStatusByAccountID[accountID] = .loggedIn
+        isCompletingLogin = true
         await refreshUsage(forAccountID: accountID)
         accountError = nil
       } catch {
         let cleanupError = await cleanupTemporaryAccount(
           accountID: accountID,
-          logout: loginCompleted
+          logout: authenticationStarted
         )
-        accountError = [error.localizedDescription, cleanupError]
-          .compactMap { $0 }
-          .joined(separator: "\n")
+        if Task.isCancelled || error is CancellationError {
+          accountError = cleanupError
+        } else {
+          accountError = [error.localizedDescription, cleanupError]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+        }
       }
     }
+    loginTask = task
+    return task
+  }
+
+  func cancelSignIn() {
+    guard let loginTask, !isCancellingLogin, !isCompletingLogin else { return }
+    isCancellingLogin = true
+    loginTask.cancel()
+  }
+
+  private func finishLogin() {
+    activeLogin = nil
+    isCancellingLogin = false
+    isCompletingLogin = false
+    loginTask = nil
   }
 
   func monitorAccounts() async {
@@ -328,19 +404,24 @@ final class TurnrailViewModel: ObservableObject {
       accountError = "Account \(accountID.uuidString) no longer exists."
       return nil
     }
-    guard authStatusByAccountID[account.id] != .loginInProgress,
+    guard !isSigningIn,
+      registryLoadError == nil,
       !removingAccountIDs.contains(account.id)
     else { return nil }
+    activeLogin = .account(accountID)
     operationByAccountID[account.id] = UUID()
     authStatusByAccountID[account.id] = .loginInProgress
     usageStatusByAccountID.removeValue(forKey: account.id)
-    return Task {
+    let task = Task {
+      defer { finishLogin() }
       do {
+        try Task.checkCancellation()
         let command = try authenticationCommand(
           forAccountID: account.id,
           action: .login(expectedEmail: account.email)
         )
-        let result = try await executeInBackground(command)
+        let result = try await loginExecutor.execute(command)
+        try Task.checkCancellation()
         guard result.exitCode == 0 else {
           throw TurnrailViewModelError.commandFailed(
             operation: "Login",
@@ -351,19 +432,29 @@ final class TurnrailViewModel: ObservableObject {
         guard let identity = try await readIdentity(forAccountID: account.id) else {
           throw TurnrailViewModelError.loginCompletedWithoutAccount
         }
+        try Task.checkCancellation()
         registryState = try registryStoreResult.get().updateIdentity(
           identity,
           for: account.id,
           in: registryState
         )
         authStatusByAccountID[account.id] = .loggedIn
+        isCompletingLogin = true
         await refreshUsage(forAccountID: account.id)
       } catch {
-        authStatusByAccountID[account.id] = .failed(
-          Self.accountIssue(accountID: account.id, source: .authentication, error: error)
-        )
+        if Task.isCancelled || error is CancellationError {
+          authStatusByAccountID.removeValue(forKey: account.id)
+          let refresh = Task { await refreshAuthStatus(for: account) }
+          await refresh.value
+        } else {
+          authStatusByAccountID[account.id] = .failed(
+            Self.accountIssue(accountID: account.id, source: .authentication, error: error)
+          )
+        }
       }
     }
+    loginTask = task
+    return task
   }
 
   @discardableResult
@@ -444,6 +535,10 @@ final class TurnrailViewModel: ObservableObject {
   }
 
   private func refreshUsage(forAccountID accountID: UUID) async {
+    guard registryState.accounts.contains(where: { $0.id == accountID }),
+      authStatusByAccountID[accountID] == .loggedIn,
+      !removingAccountIDs.contains(accountID)
+    else { return }
     let operation = UUID()
     operationByAccountID[accountID] = operation
     if usageStatusByAccountID[accountID] == nil { usageStatusByAccountID[accountID] = .checking }
@@ -620,21 +715,20 @@ final class TurnrailViewModel: ObservableObject {
     updateRouting { try $0.removingDirectory(id: id) }
   }
 
-  func refreshCompatibility() {
+  @discardableResult
+  func refreshCompatibility() -> StatusNotice {
     state = .checking
 
     do {
       let engineURL = try engineURLResult.get()
-      let report = try CompatibilityProbe().probe(
-        appURL: appURL,
-        engineURL: engineURL
-      )
-      state =
-        report.isCompatible
-        ? .ready(report)
-        : .blocked(report.mismatches.joined(separator: "\n"))
+      let report = try compatibilityProbe(appURL, engineURL)
+      let notice = StatusNotice.compatibility(report)
+      state = report.isCompatible ? .ready(report) : .blocked(notice)
+      return notice
     } catch {
-      state = .blocked(error.localizedDescription)
+      let notice = StatusNotice.compatibilityError(error)
+      state = .blocked(notice)
+      return notice
     }
   }
 
@@ -643,13 +737,12 @@ final class TurnrailViewModel: ObservableObject {
       return
     }
 
-    guard
-      NSRunningApplication.runningApplications(
-        withBundleIdentifier: CodexCompatibilityContract.supported.bundleIdentifier
-      ).isEmpty
-    else {
+    guard !isApplicationRunning() else {
       state = .blocked(
-        "Quit the running Codex app before starting Turnrail mode."
+        StatusNotice(
+          title: "ChatGPT Is Running",
+          message: "Quit the running ChatGPT app before starting Turnrail mode.",
+          recovery: nil)
       )
       return
     }
@@ -671,12 +764,16 @@ final class TurnrailViewModel: ObservableObject {
         let message = result.standardError.trimmingCharacters(
           in: .whitespacesAndNewlines
         )
-        state = .blocked("Codex launch failed: \(message)")
+        state = .blocked(
+          StatusNotice(
+            title: "ChatGPT Launch Failed", message: message, recovery: nil))
         return
       }
       state = .launched
     } catch {
-      state = .blocked(error.localizedDescription)
+      state = .blocked(
+        StatusNotice(
+          title: "ChatGPT Launch Failed", message: error.localizedDescription, recovery: nil))
     }
   }
 }

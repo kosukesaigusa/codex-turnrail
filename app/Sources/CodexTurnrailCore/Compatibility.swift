@@ -70,11 +70,11 @@ public enum CompatibilityProbeError: LocalizedError, Equatable {
   public var errorDescription: String? {
     switch self {
     case .appBundleMissing(let path):
-      "Codex app was not found at \(path)."
+      "ChatGPT app was not found at \(path)."
     case .infoPlistMissing(let path):
-      "Codex Info.plist was not found at \(path)."
+      "ChatGPT Info.plist was not found at \(path)."
     case .invalidInfoPlist(let key):
-      "Codex Info.plist does not contain a valid \(key)."
+      "ChatGPT Info.plist does not contain a valid \(key)."
     case .bundledCLIUnavailable(let path):
       "The bundled Codex CLI is not executable at \(path)."
     case .engineUnavailable(let path):
