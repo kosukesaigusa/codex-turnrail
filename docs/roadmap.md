@@ -25,12 +25,12 @@ The zsh declined-status and parent-authentication reload fixes already pass thei
 
 - Configure the signing certificate in the GitHub `release` environment and validate the first hosted Draft Release build.
 - Review bundled component notices for the binary being distributed, including native dependency subcomponents.
-- Complete the manual release checklist, then publish the verified arm64 app archive and its checksum, source and build manifest, and runtime verification report.
-- Document the package's signing status and installation steps, and verify download, extraction, Gatekeeper behavior, first launch, account setup, and official Codex integration on a Mac without development tools.
+- Complete the manual release checklist, then publish the verified arm64 app archive. Keep detailed verification records in the release workflow artifact and a summary in the release notes.
+- Document the package's signing status and installation steps, and verify download, extraction, Gatekeeper behavior, first launch, account setup, and Codex integration in ChatGPT on a Mac without development tools.
 
-The official Codex app is installed separately. Compatibility must be revalidated per supported version; the external Engine launch variables are not assumed to remain available indefinitely.
+The official ChatGPT macOS app is installed separately. Compatibility must be revalidated per supported version; the external Codex Engine launch variables are not assumed to remain available indefinitely.
 
-The Draft Release workflow requires Developer ID Application signing. Notarization and stapling remain work for general binary distribution. Signing credentials are not required to publish the source repository.
+The Draft Release workflow requires Developer ID Application signing. The workflow requires accepted notarization, a stapled ticket, and verified download integrity before a draft is ready to publish. Signing credentials are not required to publish the source repository.
 
 ## Ongoing maintenance
 

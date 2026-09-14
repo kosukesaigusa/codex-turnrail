@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Observe official Codex releases and maintain one upstream tracking issue."""
+"""Observe ChatGPT app and Codex CLI releases in one upstream tracking issue."""
 
 import argparse
 import json
@@ -116,10 +116,10 @@ def parse_appcast(data):
             raise ValueError("Appcast archive is missing size or signature data.")
         releases.append({"version": version, "build": build, "url": url, "size": size})
     if not releases:
-        raise ValueError("The Codex appcast contains no macOS releases.")
+        raise ValueError("The ChatGPT app update feed contains no macOS releases.")
     builds = [release["build"] for release in releases]
     if len(builds) != len(set(builds)):
-        raise ValueError("The Codex appcast contains duplicate builds.")
+        raise ValueError("The ChatGPT app update feed contains duplicate builds.")
     return max(releases, key=lambda release: int(release["build"]))
 
 
@@ -159,9 +159,10 @@ def report_body(observation):
     supported = observation["supported"]
     lines = [
         ISSUE_MARKER,
-        "This issue tracks official Codex updates and monitoring failures.",
+        "This issue tracks ChatGPT app and Codex CLI updates and monitoring failures.",
         "",
-        f"Supported app: {supported['app']['version']} ({supported['app']['build']}).",
+        f"Supported ChatGPT app: {supported['app']['version']} "
+        f"({supported['app']['build']}).",
         f"Engine base: {supported['codex']['tag']}.",
         "",
     ]
@@ -169,13 +170,15 @@ def report_body(observation):
     if observation["app"] is not None:
         app = observation["app"]
         pending |= app_candidate(observation)
-        lines.append(f"Latest app: [{app['version']} ({app['build']})]({APPCAST_URL}).")
+        lines.append(
+            f"Latest ChatGPT app: [{app['version']} ({app['build']})]({APPCAST_URL})."
+        )
     if observation["cli"] is not None:
         cli = observation["cli"]
         pending |= codex_version_key(cli["tag"]) > codex_version_key(
             supported["codex"]["tag"]
         )
-        lines.append(f"Latest stable CLI: [{cli['tag']}]({cli['url']}).")
+        lines.append(f"Latest stable Codex CLI: [{cli['tag']}]({cli['url']}).")
     for source, error in observation["errors"].items():
         lines.extend(["", f"{source} monitoring failed: {error}"])
     lines.extend(

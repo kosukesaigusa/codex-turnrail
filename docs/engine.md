@@ -11,7 +11,7 @@
 - Base commit: `b5bffd3ec4db487e7e3dec59663875b0ef7b72ca`.
 - Matching CLI: `codex-cli 0.154.0-alpha.6.2`.
 
-The base matches the CLI bundled with the supported official app. An official app update requires renewed compatibility validation. The upstream [LICENSE](../engine/LICENSE), [NOTICE](../engine/NOTICE), component licenses, and lockfiles remain in the source tree.
+The base matches the Codex CLI bundled with the supported ChatGPT macOS app. A ChatGPT app update requires renewed compatibility validation. The upstream [LICENSE](../engine/LICENSE), [NOTICE](../engine/NOTICE), component licenses, and lockfiles remain in the source tree.
 
 Use the root `just sync-upstream` command to prepare an upstream update. The [update procedure](development.md#upstream-updates) explains its clean-worktree requirement, three-way merge, and conflict behavior.
 

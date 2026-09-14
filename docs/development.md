@@ -5,7 +5,7 @@ Run product commands from the repository root. Both `app/` and `engine/` are par
 ## Prerequisites
 
 - Apple Silicon macOS 14 or newer with Xcode command line tools and Swift 6.
-- The official Codex app at `/Applications/ChatGPT.app`, matching `upstream.toml`, for launch verification. Packaging takes an explicit official CLI path with the matching version.
+- The official ChatGPT macOS app at `/Applications/ChatGPT.app`, matching `upstream.toml`, for launch verification. Packaging takes an explicit Codex CLI path with the matching version.
 - Rust and components specified by `engine/codex-rs/rust-toolchain.toml`.
 - Python 3.12 or newer, uv 0.11.3, just 1.51.0, cargo-nextest 0.9.103, and DotSlash.
 - Node.js 22 and pnpm 10.34.5, as used by CI.
@@ -97,7 +97,7 @@ Success requires every step. An output created before a failure is not a verifie
 
 The GitHub release job calls the same packaging script with explicit `--ci`. That mode requires `GITHUB_ACTIONS=true`, retains the shared lock and disabled incremental compilation, and uses a 5 GiB reserve on an ephemeral runner. It leaves generated build files for the workflow to save timing reports and the compilation cache before its final cleanup step. Local packaging retains automatic cleanup and the 30 GiB reserve. The reserve is not a guarantee that compilation will fit the available disk.
 
-Replace an installed app only after the official Codex app and its Engine have exited. A running Engine may still load resources from its existing bundle path.
+Replace an installed app only after the official ChatGPT app and its Codex Engine have exited. A running Engine may still load resources from its existing bundle path.
 
 ## Upstream updates
 

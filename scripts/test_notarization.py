@@ -212,7 +212,7 @@ class NotarizationTests(unittest.TestCase):
                 release.notarize(self.output, "v0.1.0")
             submit.assert_not_called()
 
-    def test_archive_contains_the_verified_report_and_stapled_app(self):
+    def prepare_archive(self):
         with patch.object(notarization, "execute", side_effect=self.execute):
             notarization.notarize(self.app, self.output, self.environment)
         manifest = {
@@ -222,7 +222,18 @@ class NotarizationTests(unittest.TestCase):
             ),
         }
         (self.output / "build-manifest.json").write_text(json.dumps(manifest))
-        (self.output / "runtime-verification.json").write_text("runtime evidence")
+        (self.output / "runtime-verification.json").write_text(
+            json.dumps(
+                [
+                    {"case": case, "passed": True}
+                    for case in ("code_mode", "approval_accept", "approval_decline")
+                ]
+            )
+        )
+        return manifest
+
+    def test_archive_keeps_verification_records_internal_and_detects_changes(self):
+        manifest = self.prepare_archive()
 
         def archive_command(command, **kwargs):
             self.assertTrue((Path(command[-2]) / "ticket").is_file())
@@ -234,11 +245,69 @@ class NotarizationTests(unittest.TestCase):
             patch.object(release.subprocess, "run", side_effect=archive_command),
         ):
             artifacts = release.archive(self.output, "v0.1.0")
+            original_archives = {path: path.read_bytes() for path in artifacts}
             with self.assertRaisesRegex(ValueError, "already exist"):
                 release.archive(self.output, "v0.1.0")
-        self.assertIn(self.output / notarization.REPORT, artifacts)
-        sums = (self.output / "SHA256SUMS").read_text()
-        self.assertIn(release.sha256(self.output / notarization.REPORT), sums)
+        self.assertEqual(
+            {path: path.read_bytes() for path in artifacts}, original_archives
+        )
+        self.assertEqual(
+            artifacts,
+            [
+                self.output / "Codex-Turnrail-v0.1.0-macos-arm64.zip",
+            ],
+        )
+        report_names = {
+            "build-manifest.json",
+            "runtime-verification.json",
+            "notarization-report.json",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            download = Path(temporary)
+            internal_records = [self.output / name for name in report_names]
+            internal_records.append(self.output / "SHA256SUMS")
+            for path in [*artifacts, *internal_records]:
+                (download / path.name).write_bytes(path.read_bytes())
+            for name in report_names:
+                self.assertEqual(
+                    (download / name).read_bytes(), (self.output / name).read_bytes()
+                )
+            command = ["shasum", "-a", "256", "-c", "SHA256SUMS"]
+            result = subprocess.run(
+                command, cwd=download, capture_output=True, text=True, check=True
+            )
+            self.assertCountEqual(
+                result.stdout.splitlines(),
+                [f"{name}: OK" for name in [artifacts[0].name, *report_names]],
+            )
+            for name in (artifacts[0].name, notarization.REPORT):
+                with self.subTest(changed_file=name):
+                    path = download / name
+                    original = path.read_bytes()
+                    path.write_bytes(b"changed contents")
+                    result = subprocess.run(
+                        command, cwd=download, capture_output=True, text=True
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"{name}: FAILED", result.stdout)
+                    path.write_bytes(original)
+
+    def test_existing_checksums_are_preserved_before_app_archiving(self):
+        manifest = self.prepare_archive()
+        checksums = self.output / "SHA256SUMS"
+        checksums.write_bytes(b"existing checksums")
+        with (
+            patch.object(release, "validate_distribution", return_value=manifest),
+            patch.object(notarization, "execute", side_effect=self.execute),
+            patch.object(release.subprocess, "run") as archive_command,
+            self.assertRaisesRegex(ValueError, "already exist"),
+        ):
+            release.archive(self.output, "v0.1.0")
+        archive_command.assert_not_called()
+        self.assertEqual(checksums.read_bytes(), b"existing checksums")
+        self.assertFalse(
+            (self.output / "Codex-Turnrail-v0.1.0-macos-arm64.zip").exists()
+        )
 
 
 if __name__ == "__main__":

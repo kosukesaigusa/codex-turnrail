@@ -67,10 +67,15 @@ jobs:
           just metadata-check
           just test-tools
 
-      - name: Build and test the app
+      - name: Build the app
         run: |
+          swift --version
+          xcodebuild -version
           swift build --package-path app -c release --jobs 2
-          swift test --package-path app --jobs 2
+
+      - name: Test the app
+        timeout-minutes: 5
+        run: swift test --package-path app --jobs 2 --verbose
 
       - name: Check packaging scripts and metadata
         run: |

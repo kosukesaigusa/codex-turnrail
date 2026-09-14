@@ -2,7 +2,7 @@
 
 ## Product contract
 
-Codex Turnrail combines a macOS menu bar app in `app/` with a dedicated Codex Engine in `engine/`. The companion launches the unmodified official Codex app in Turnrail mode. Normal launches retain official behavior. Closing Settings does not stop an Engine already serving the official app.
+Codex Turnrail combines a macOS menu bar app in `app/` with a dedicated Codex Engine in `engine/`. The companion launches the unmodified official ChatGPT macOS app (`ChatGPT.app`) in Turnrail mode for Codex tasks. Normal launches retain official behavior. Closing Settings does not stop an Engine already serving ChatGPT.
 
 Folder rules define both permitted accounts and their priority. Changes apply to the next top-level turn in every conversation matching that rule. Active turns, child agents, reviews, and compaction retain the authentication already bound to their task.
 
@@ -73,7 +73,7 @@ Account removal first logs out its credentials. Only after logout succeeds does 
 
 ## Management UI
 
-**Switch** compares quota and changes priority for a folder. **Folders** edits assignments. **Accounts** adds, reauthenticates, and removes global accounts. Launch status, **Open Codex**, and **Check Compatibility** sit below the sidebar. A running official app disables duplicate launch.
+**Switch** compares quota and changes priority for a folder. **Folders** edits assignments. **Accounts** adds, reauthenticates, and removes global accounts. Launch status, **Open Codex**, and **Check Compatibility** sit below the sidebar. **Open Codex** launches ChatGPT with the dedicated Engine. A running ChatGPT app disables duplicate launch.
 
 The interface is English. Normal screens show the quota, reset times, timestamps, and errors needed for decisions. Detailed errors expose the complete diagnostic JSON without persisting it. Internal paths and nonessential helper text are not shown.
 

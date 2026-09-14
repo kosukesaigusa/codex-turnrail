@@ -17,6 +17,11 @@ struct AccountMonitoringTests {
       commandExecutor: CommandExecutor { _, _, _ in
         CommandResult(exitCode: 0, standardOutput: "", standardError: "")
       },
+      loginExecutor: AccountLoginExecutor { _ in
+        CommandResult(exitCode: 0, standardOutput: "", standardError: "")
+      },
+      compatibilityProbe: { _, _ in supportedCompatibilityReport() },
+      isApplicationRunning: { false },
       identityReader: AccountIdentityReader { _, _ in try await gate.read() },
       usageReader: AccountUsageReader { _, _ in try usage(used: 10) }
     )
@@ -135,6 +140,11 @@ private struct Fixture {
       commandExecutor: CommandExecutor { _, _, _ in
         CommandResult(exitCode: 0, standardOutput: "", standardError: "")
       },
+      loginExecutor: AccountLoginExecutor { _ in
+        CommandResult(exitCode: 0, standardOutput: "", standardError: "")
+      },
+      compatibilityProbe: { _, _ in supportedCompatibilityReport() },
+      isApplicationRunning: { false },
       identityReader: AccountIdentityReader { _, _ in
         try ChatGPTAccountIdentity(email: "account@example.com", planType: .pro)
       },
