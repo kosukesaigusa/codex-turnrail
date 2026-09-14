@@ -1,5 +1,5 @@
 // Modified for Codex Turnrail.
-//! Turn-scoped state and active turn metadata scaffolding.
+//! Turn-scoped state, input waiters, and active turn metadata.
 
 use crate::tools::ExecApprovalStatus;
 use std::collections::HashMap;
@@ -92,7 +92,7 @@ pub(crate) struct RunningTask {
 pub(crate) struct TurnState {
     pending_approvals: HashMap<String, PendingApproval>,
     pending_request_permissions: HashMap<String, PendingRequestPermissions>,
-    pending_user_input: HashMap<String, oneshot::Sender<RequestUserInputResponse>>,
+    pending_user_input: HashMap<String, oneshot::Sender<AcceptedUserInputResponse>>,
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
     mcp_tool_approval_metadata: HashMap<String, (Option<McpInvocation>, McpToolApprovalMetadata)>,
     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
@@ -111,6 +111,13 @@ pub(crate) struct TurnState {
 pub(crate) struct PendingApproval {
     pub(crate) sender: oneshot::Sender<ReviewDecision>,
     pub(crate) approval_status: Option<ExecApprovalStatus>,
+}
+
+/// Host receipt metadata follows the response through the asynchronous tool waiter.
+pub(crate) struct AcceptedUserInputResponse {
+    pub(crate) response: RequestUserInputResponse,
+    /// Absent in legacy mode, which does not reserve or persist acceptance order.
+    pub(crate) acceptance_order: Option<u64>,
 }
 
 pub(crate) struct PendingRequestPermissions {
@@ -160,15 +167,15 @@ impl TurnState {
     pub(crate) fn insert_pending_user_input(
         &mut self,
         key: String,
-        tx: oneshot::Sender<RequestUserInputResponse>,
-    ) -> Option<oneshot::Sender<RequestUserInputResponse>> {
+        tx: oneshot::Sender<AcceptedUserInputResponse>,
+    ) -> Option<oneshot::Sender<AcceptedUserInputResponse>> {
         self.pending_user_input.insert(key, tx)
     }
 
     pub(crate) fn remove_pending_user_input(
         &mut self,
         key: &str,
-    ) -> Option<oneshot::Sender<RequestUserInputResponse>> {
+    ) -> Option<oneshot::Sender<AcceptedUserInputResponse>> {
         self.pending_user_input.remove(key)
     }
 

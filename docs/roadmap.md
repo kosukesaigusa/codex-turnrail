@@ -1,6 +1,6 @@
 # Roadmap
 
-Codex Turnrail is a macOS-only product preparing its initial `v0.1.0` release. Product and upstream versions are recorded in `packaging/Info.plist` and `upstream.toml`. Current evidence and its limits are recorded in [Verification](verification.md).
+Codex Turnrail is a macOS-only product distributed through signed and notarized release drafts. Product and upstream versions are recorded in `packaging/Info.plist` and `upstream.toml`. Current evidence and its limits are recorded in [Verification](verification.md).
 
 Initial releases will use GitHub Releases. Users download the app archive and install updates manually. Windows support, an automatic updater, and a dedicated distribution site are outside the current scope.
 

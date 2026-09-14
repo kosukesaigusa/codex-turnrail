@@ -137,6 +137,25 @@ class UpstreamTests(unittest.TestCase):
             "product header\n\nbody\n\nfooter\n",
         )
 
+    def test_prerelease_update_preserves_routing_and_exact_provenance(self):
+        incoming = self.publish_update("header\n\nbody\n\nnew footer\n")
+        tag = "rust-v2.0.0-alpha.6.2"
+        self.git(self.upstream, "tag", tag)
+        head = self.git(self.product, "rev-parse", "HEAD")
+        self.assertEqual(sync_upstream.update(self.product, tag), incoming)
+        metadata = sync_upstream.read_upstream(self.product)
+        self.assertEqual(metadata["codex"]["tag"], tag)
+        self.assertEqual(metadata["codex"]["commit"], incoming)
+        self.assertEqual(
+            (self.product / "engine/custom.txt").read_text(), "account routing\n"
+        )
+        self.assertEqual(
+            (self.product / "engine/runtime.txt").read_text(),
+            "product header\n\nbody\n\nnew footer\n",
+        )
+        self.assertEqual(self.git(self.product, "rev-parse", "HEAD"), head)
+        self.assertEqual(self.git(self.product, "diff", "--cached"), "")
+
     def test_dirty_worktree_is_rejected_before_fetching(self):
         (self.product / "README.md").write_text("# Work in progress\n")
         with self.assertRaisesRegex(sync_upstream.UpstreamError, "local changes"):

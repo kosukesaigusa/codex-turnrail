@@ -4,25 +4,23 @@
 import argparse
 import json
 import plistlib
-import re
 import stat
 import subprocess
 import sys
 import tempfile
-import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 
 from project_metadata import (
     GENERATED,
     ROOT,
-    VERSION,
+    codex_version,
     metadata_bytes,
     read_upstream,
     supported_swift,
 )
 from sync_upstream import UpstreamError, update
-from upstream_watch import app_candidate, github
+from upstream_watch import app_candidate, download_app_file, github, source_release
 
 
 def inspect_app(candidate, directory):
@@ -30,14 +28,9 @@ def inspect_app(candidate, directory):
     expected_url = f"https://persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-arm64-{candidate['version']}.zip"
     if candidate["url"] != expected_url:
         raise ValueError("The candidate archive is not the expected official app URL.")
-    with (
-        urllib.request.urlopen(candidate["url"], timeout=60) as source,
-        archive.open("wb") as target,
-    ):
-        while block := source.read(1024 * 1024):
-            if target.tell() + len(block) > candidate["size"]:
-                raise ValueError("The official app archive exceeds its declared size.")
-            target.write(block)
+    download_app_file(
+        candidate["url"], archive, max_bytes=candidate["size"], timeout=600
+    )
     if archive.stat().st_size != candidate["size"]:
         raise ValueError("The official app archive size does not match its appcast.")
     extracted = directory / "extracted"
@@ -87,17 +80,15 @@ def inspect_app(candidate, directory):
     version = subprocess.check_output(
         [str(app / "Contents/Resources/codex"), "--version"], text=True
     ).strip()
-    if re.fullmatch(f"codex-cli {VERSION}", version) is None:
-        raise ValueError(
-            "The candidate app does not bundle a stable public CLI version."
-        )
-    return "rust-v" + version.removeprefix("codex-cli ")
+    if not version.startswith("codex-cli "):
+        raise ValueError("The candidate app does not report a Codex CLI version.")
+    tag = "rust-v" + version.removeprefix("codex-cli ")
+    codex_version(tag)
+    return tag
 
 
 def prepare(root, candidate, tag):
-    release = github(f"repos/openai/codex/releases/tags/{tag}")
-    if release["draft"] or release["prerelease"] or release["tag_name"] != tag:
-        raise ValueError("The candidate CLI has no matching stable source release.")
+    source_release(tag)
     commit = update(root, tag)
     metadata = read_upstream(root)
     metadata["app"] = {
