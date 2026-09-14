@@ -124,29 +124,29 @@ def publish(repository, branch, candidate, tag, commit):
             "git",
             "commit",
             "-m",
-            f"chore: support Codex {candidate['version']} ({candidate['build']})",
+            f"chore: support ChatGPT {candidate['version']} ({candidate['build']})",
         ],
         check=True,
     )
     subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], check=True)
     body = (
         "## Summary\n\n"
-        f"Update the supported official app to {candidate['version']} "
+        f"Update the supported ChatGPT macOS app to {candidate['version']} "
         f"({candidate['build']}). "
-        f"Its signed bundle reports CLI {tag[6:]}; Engine base is `{commit}`.\n\n"
+        f"Its signed bundle reports Codex CLI {tag[6:]}; Engine base is `{commit}`.\n\n"
         "The official Apple signature and exact app metadata passed inspection. "
         "The Engine changes were prepared with a three-way upstream merge.\n\n"
         "## Test plan\n\n"
         "- [ ] Product CI passes for this commit.\n"
         "- [ ] Review the upstream changes, dependencies, and launch contract.\n"
-        "- [ ] Verify official UI turns, approvals, and account switching.\n"
+        "- [ ] Verify Codex UI turns in ChatGPT, approvals, and account switching.\n"
         "- [ ] Increment the Turnrail minor version and build number before release.\n"
     )
     pr = github(
         f"repos/{repository}/pulls",
         method="POST",
         payload={
-            "title": f"chore: support Codex {candidate['version']}",
+            "title": f"chore: support ChatGPT {candidate['version']}",
             "head": branch,
             "base": "main",
             "draft": True,

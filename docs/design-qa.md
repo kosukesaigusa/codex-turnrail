@@ -21,4 +21,4 @@ The UI is English. It keeps the quota, timestamps, and errors needed for decisio
 
 This inspection did not add, reauthenticate, or remove real accounts or change folder permissions and priority. Automated tests cover those state transitions and asynchronous refresh races. The visual and functional review was a self-review.
 
-After inspection, the output app was closed and the installed `0.8.0 (24)` Settings was restored. The official Codex app and active Engine were preserved. See [Verification](verification.md) for package results and remaining real-operation checks.
+After inspection, the output app was closed and the installed `0.8.0 (24)` Settings was restored. The official ChatGPT app and active Codex Engine were preserved. See [Verification](verification.md) for package results and remaining real-operation checks.

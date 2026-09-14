@@ -1,6 +1,6 @@
 # Verification
 
-This record distinguishes observed results from work still required before installation and distribution. Current product and supported Codex versions are defined in `packaging/Info.plist` and `upstream.toml`. Historical results below retain the versions that were actually tested.
+This record distinguishes observed results from work still required before installation and distribution. Current Turnrail, supported ChatGPT app, and Codex CLI versions are defined in `packaging/Info.plist` and `upstream.toml`. Historical results below retain the versions that were actually tested.
 
 ## Release preparation for 0.1.0
 
@@ -141,7 +141,7 @@ Before and after that inspection, the registry remained schema 3 with the same r
 ## Unverified scope
 
 - Installation of the updated package in place of `0.8.0 (24)`.
-- Official Codex UI turns and account switching with the updated runtime.
+- Codex UI turns in the official ChatGPT app and account switching with the updated runtime.
 - Real browser login, reauthentication, logout, and removal.
 - A hosted Draft Release build with Developer ID credentials.
 - A successful full Rust workspace run and resolution of its remaining failures.

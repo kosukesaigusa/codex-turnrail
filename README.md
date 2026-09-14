@@ -1,18 +1,24 @@
 # Codex Turnrail
 
-A macOS menu bar app for using multiple ChatGPT accounts in Codex, with account rules for each folder.
+A macOS menu bar app for using multiple accounts with Codex in the ChatGPT app, with account rules for each folder.
 
-This is an independent project with no affiliation with or endorsement from OpenAI. It launches the official Codex app with a dedicated Engine, preserving the official app's bundle and signature.
+This is an independent project with no affiliation with or endorsement from OpenAI. It launches the official ChatGPT macOS app with a dedicated Codex Engine, preserving the official app's bundle and signature.
 
-## Getting started
+## Install
 
-The project is in initial development, for Apple silicon Macs running macOS 14 or later. It requires the exact official app and Engine versions recorded in [upstream.toml](upstream.toml), with the official app installed at `/Applications/ChatGPT.app`. Other versions are rejected.
+Requires an Apple silicon Mac running macOS 14 or later and the [supported ChatGPT macOS app](upstream.toml) installed at `/Applications/ChatGPT.app`. The ChatGPT app version and build must match exactly.
 
-See [Development](docs/development.md) to build a signed app. Verified archives will appear in [GitHub Releases](https://github.com/kosukesaigusa/codex-turnrail/releases), with manual installation and updates. No verified public binary release is available yet. Official UI end-to-end validation remains pending; see [Verification](docs/verification.md).
+1. [Download Codex Turnrail for macOS (Apple silicon)](https://github.com/kosukesaigusa/codex-turnrail/releases/download/v0.2.1/Codex-Turnrail-v0.2.1-macos-arm64.zip).
+2. Double-click the ZIP, then drag `Codex Turnrail.app` into **Applications**.
+3. Quit ChatGPT if it is running, open **Codex Turnrail**, and select **Check Compatibility**.
 
-1. Connect your ChatGPT accounts in **Accounts**.
-2. Assign permitted accounts to each folder in **Folders**.
-3. Review quota and set account priority in **Switch**, then select **Open Codex**.
+Only the app ZIP is needed. No Terminal commands are required.
+
+## Set up
+
+1. In **Accounts**, select **Add Account** and sign in to your ChatGPT accounts.
+2. In **Folders**, add a folder and assign its permitted accounts.
+3. Review quota and set account priority in **Switch**, then select **Open Codex** to launch ChatGPT with Turnrail's account routing.
 
 Folder rules apply to subfolders. The Engine selects an available account from the matching rule before each turn. Active turns keep their account; changes apply to the next turn.
 
@@ -27,6 +33,8 @@ Removing an account deletes its Turnrail credentials and account settings. Share
 ## Development
 
 The Swift app lives in `app/` and the Codex Engine in `engine/`. Use the root `justfile` for builds and checks.
+
+See [Development](docs/development.md) to build from source and [Verification](docs/verification.md) for validation results and remaining checks.
 
 See [Architecture](docs/architecture.md) for routing and storage details, [Engine](docs/engine.md) for upstream provenance, [Releases](docs/releases.md) for versioning and upstream automation, and [Roadmap](docs/roadmap.md) for remaining work. Read [Contributing](CONTRIBUTING.md) before proposing changes and [Security](SECURITY.md) to report a vulnerability privately.
 
