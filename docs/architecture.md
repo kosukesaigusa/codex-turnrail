@@ -46,6 +46,7 @@ An independent task reads this metadata every 5 seconds and displays local time 
 
 - Account selection stays within the matching rule. An empty rule rejects the request; it does not select another rule.
 - Only missing login, permanent authentication-refresh failure, and exhausted general Codex quota permit advancing to the next assigned account before a turn.
+- General Codex quota is unavailable when `rate_limit.allowed` is false, `rate_limit.limit_reached` is true, or either usage window is fully consumed. A reached spending cap alone does not exclude an account whose general quota is available.
 - Quota transport failures, missing general quota buckets, invalid percentages, and registered-email mismatches fail immediately.
 - Model lookup failures, invalid catalogs, and models unavailable to the selected account are explicit errors. They do not advance account priority.
 - An expired authentication label requires the specific `token_expired` error. Other failures are not guessed to be expiration. Reauthentication is an explicit user action.

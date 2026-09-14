@@ -1,12 +1,12 @@
 use crate::account_routing::AccountRouting;
 use crate::account_routing::AccountRoutingError;
 use codex_backend_client::Client as BackendClient;
+use codex_backend_client::RateLimitStatusDetails;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::Config;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_protocol::ThreadId;
-use codex_protocol::protocol::RateLimitSnapshot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
@@ -123,7 +123,7 @@ pub(crate) enum TurnrailError {
     #[error("Codex quota response for account {0} did not contain the general Codex quota")]
     MissingGeneralRateLimits(Uuid),
     #[error("Codex quota response for account {account_id} contained invalid used percent {value}")]
-    InvalidRateLimitPercentage { account_id: Uuid, value: f64 },
+    InvalidRateLimitPercentage { account_id: Uuid, value: i32 },
     #[error("no Codex Turnrail account is available: {0}")]
     NoAvailableAccount(String),
 }
@@ -307,21 +307,20 @@ impl TurnrailCoordinator {
             return Ok(Some(AccountUnavailableReason::AuthenticationRefreshFailed));
         }
 
-        let rate_limits = BackendClient::from_auth(
+        let usage = BackendClient::from_auth(
             base_config.chatgpt_base_url.clone(),
             &auth,
             base_config.http_client_factory(),
         )
-        .get_rate_limits_many()
+        .get_rate_limit_status()
         .await
         .map_err(|source| TurnrailError::InspectRateLimits { account_id, source })?;
-        let general_rate_limits = rate_limits
-            .iter()
-            .find(|snapshot| {
-                snapshot.limit_id.as_deref() == Some("codex") || snapshot.limit_id.is_none()
-            })
+        let general_rate_limits = usage
+            .rate_limits
+            .rate_limit
+            .flatten()
             .ok_or(TurnrailError::MissingGeneralRateLimits(account_id))?;
-        if general_codex_quota_is_exhausted(account_id, general_rate_limits)? {
+        if general_codex_quota_is_exhausted(account_id, &general_rate_limits)? {
             return Ok(Some(AccountUnavailableReason::CodexQuotaExhausted));
         }
         Ok(None)
@@ -505,25 +504,26 @@ impl TurnrailCoordinator {
 
 fn general_codex_quota_is_exhausted(
     account_id: Uuid,
-    snapshot: &RateLimitSnapshot,
+    status: &RateLimitStatusDetails,
 ) -> Result<bool, TurnrailError> {
-    for window in [snapshot.primary.as_ref(), snapshot.secondary.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        if !window.used_percent.is_finite() || !(0.0..=100.0).contains(&window.used_percent) {
+    let windows = [
+        status.primary_window.as_ref().and_then(Option::as_deref),
+        status.secondary_window.as_ref().and_then(Option::as_deref),
+    ];
+    for window in windows.into_iter().flatten() {
+        if !(0..=100).contains(&window.used_percent) {
             return Err(TurnrailError::InvalidRateLimitPercentage {
                 account_id,
                 value: window.used_percent,
             });
         }
     }
-    Ok(snapshot.rate_limit_reached_type.is_some()
-        || snapshot.spend_control_reached == Some(true)
-        || [snapshot.primary.as_ref(), snapshot.secondary.as_ref()]
+    Ok(!status.allowed
+        || status.limit_reached
+        || windows
             .into_iter()
             .flatten()
-            .any(|window| window.used_percent == 100.0))
+            .any(|window| window.used_percent == 100))
 }
 
 fn ensure_authentication_email_matches(
@@ -553,7 +553,6 @@ fn is_valid_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::protocol::RateLimitWindow;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::path::Path;
@@ -647,25 +646,20 @@ mod tests {
     #[test]
     fn detects_exhausted_general_codex_quota() {
         let account_id = Uuid::parse_str(ACCOUNT_ID).expect("account id");
-        let snapshot = RateLimitSnapshot {
-            limit_id: Some("codex".to_string()),
-            limit_name: None,
-            primary: Some(RateLimitWindow {
-                used_percent: 100.0,
-                window_minutes: Some(10_080),
-                resets_at: Some(1_700_000_000),
-            }),
-            secondary: None,
-            credits: None,
-            individual_limit: None,
-            spend_control_reached: None,
-            plan_type: None,
-            rate_limit_reached_type: None,
-        };
+        let status = serde_json::from_value(json!({
+            "allowed": false,
+            "limit_reached": true,
+            "primary_window": {
+                "used_percent": 100,
+                "limit_window_seconds": 604_800,
+                "reset_after_seconds": 18_000,
+                "reset_at": 1_700_000_000
+            }
+        }))
+        .expect("rate limit status");
 
         assert!(
-            general_codex_quota_is_exhausted(account_id, &snapshot)
-                .expect("valid rate limit snapshot")
+            general_codex_quota_is_exhausted(account_id, &status).expect("valid rate limit status")
         );
     }
 
