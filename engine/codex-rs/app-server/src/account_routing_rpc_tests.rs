@@ -127,6 +127,251 @@ async fn quota(harness: &RpcHarness, token: &str, used_percent: u64, priority: u
         .await;
 }
 
+fn available_usage() -> Value {
+    json!({
+        "plan_type": "team",
+        "rate_limit": {
+            "allowed": true,
+            "limit_reached": false,
+            "primary_window": {
+                "used_percent": 0, "limit_window_seconds": 18_000,
+                "reset_after_seconds": 18_000, "reset_at": 2_000_000_000
+            }
+        }
+    })
+}
+
+async fn account_usage(harness: &RpcHarness, usage: Value) -> wiremock::MockGuard {
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/usage"))
+        .and(header("authorization", "Bearer account-c"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(usage))
+        .with_priority(/*priority*/ 1)
+        .mount_as_scoped(&harness.server)
+        .await
+}
+
+async fn inspected_usage_accounts(
+    harness: &RpcHarness,
+) -> Result<std::collections::BTreeSet<String>> {
+    harness
+        .server
+        .received_requests()
+        .await
+        .context("requests")?
+        .iter()
+        .filter(|request| request.url.path() == "/backend-api/wham/usage")
+        .map(|request| {
+            Ok(request
+                .headers
+                .get("authorization")
+                .context("usage authorization")?
+                .to_str()?
+                .to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn reached_spending_cap_keeps_an_allowed_directory_account() -> Result<()> {
+    run_test(async {
+        let mut harness = RpcHarness::new().await?;
+        let (work, _) = configure(&harness, &[ACCOUNT_A], &[ACCOUNT_C, ACCOUNT_A])?;
+        let nested = work.join("service/src");
+        std::fs::create_dir_all(&nested)?;
+        let mut usage = available_usage();
+        usage["spend_control"] = json!({
+            "reached": true,
+            "individual_limit": {
+                "limit": "0", "used": "0", "remaining": "0",
+                "used_percent": 100, "remaining_percent": 0,
+                "reset_after_seconds": 18_000, "reset_at": 2_000_000_000
+            }
+        });
+        let _usage = account_usage(&harness, usage).await;
+
+        let thread = start_at(&mut harness, &nested).await?;
+        assert_eq!(
+            inspected_usage_accounts(&harness).await?,
+            std::collections::BTreeSet::from(["Bearer account-c".to_string()])
+        );
+        harness
+            .turn(
+                &thread,
+                "fixture-allowed-team",
+                "account-c",
+                "fixture-team-answer",
+            )
+            .await?;
+        harness.shutdown().await;
+        Ok(())
+    })
+}
+
+#[test]
+fn unavailable_general_quota_advances_to_the_next_permitted_account() -> Result<()> {
+    run_test(async {
+        let cases = [
+            ("denied", json!({"allowed": false})),
+            ("limit-reached", json!({"limit_reached": true})),
+            (
+                "primary-exhausted",
+                json!({"primary_window": {
+                    "used_percent": 100, "limit_window_seconds": 18_000,
+                    "reset_after_seconds": 18_000, "reset_at": 2_000_000_000
+                }}),
+            ),
+            (
+                "secondary-exhausted",
+                json!({"secondary_window": {
+                    "used_percent": 100, "limit_window_seconds": 604_800,
+                    "reset_after_seconds": 18_000, "reset_at": 2_000_000_000
+                }}),
+            ),
+        ];
+        for (name, overrides) in cases {
+            let mut harness = RpcHarness::new().await?;
+            let (work, _) = configure(&harness, &[ACCOUNT_B], &[ACCOUNT_C, ACCOUNT_A])?;
+            let mut usage = available_usage();
+            for (key, value) in overrides.as_object().context("quota overrides")? {
+                usage["rate_limit"][key] = value.clone();
+            }
+            let _usage = account_usage(&harness, usage).await;
+
+            let thread = start_at(&mut harness, &work).await?;
+            assert_eq!(
+                inspected_usage_accounts(&harness).await?,
+                std::collections::BTreeSet::from([
+                    "Bearer account-a".to_string(),
+                    "Bearer account-c".to_string()
+                ]),
+                "{name}"
+            );
+            harness
+                .turn(&thread, name, "account-a", "fixture-next-permitted-answer")
+                .await?;
+            harness.shutdown().await;
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn invalid_general_quota_blocks_without_trying_another_account() -> Result<()> {
+    run_test(async {
+        let cases = [
+            (
+                "missing",
+                json!({"plan_type": "team"}),
+                "did not contain the general Codex quota",
+            ),
+            (
+                "null",
+                json!({"plan_type": "team", "rate_limit": null}),
+                "did not contain the general Codex quota",
+            ),
+            (
+                "missing-allowed",
+                json!({"plan_type": "team", "rate_limit": {"limit_reached": false}}),
+                "failed to inspect Codex quota",
+            ),
+            (
+                "missing-limit-reached",
+                json!({"plan_type": "team", "rate_limit": {"allowed": true}}),
+                "failed to inspect Codex quota",
+            ),
+            (
+                "invalid-primary-percent",
+                json!({"plan_type": "team", "rate_limit": {
+                    "allowed": true, "limit_reached": false,
+                    "primary_window": {"used_percent": -1, "limit_window_seconds": 18_000,
+                        "reset_after_seconds": 18_000, "reset_at": 2_000_000_000}
+                }}),
+                "contained invalid used percent -1",
+            ),
+            (
+                "invalid-secondary-percent",
+                json!({"plan_type": "team", "rate_limit": {
+                    "allowed": true, "limit_reached": false,
+                    "secondary_window": {"used_percent": 101, "limit_window_seconds": 604_800,
+                        "reset_after_seconds": 18_000, "reset_at": 2_000_000_000}
+                }}),
+                "contained invalid used percent 101",
+            ),
+        ];
+        for (name, usage, expected_error) in cases {
+            let mut harness = RpcHarness::new().await?;
+            let (work, _) = configure(&harness, &[ACCOUNT_B], &[ACCOUNT_C, ACCOUNT_A])?;
+            let _usage = account_usage(&harness, usage).await;
+
+            let response = harness.rpc("thread/start", json!({"cwd": work})).await?;
+            let OutgoingMessage::Error(error) = response else {
+                anyhow::bail!("{name}: invalid quota must block account selection");
+            };
+            assert!(
+                error.error.message.contains(expected_error),
+                "{name}: {error:?}"
+            );
+            assert_eq!(
+                inspected_usage_accounts(&harness).await?,
+                std::collections::BTreeSet::from(["Bearer account-c".to_string()]),
+                "{name}"
+            );
+            harness.shutdown().await;
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn recovered_directory_quota_is_used_on_the_next_turn() -> Result<()> {
+    run_test(async {
+        let mut harness = RpcHarness::new().await?;
+        let (work, _) = configure(&harness, &[ACCOUNT_A], &[ACCOUNT_C, ACCOUNT_A])?;
+        quota(
+            &harness,
+            "account-c",
+            /*used_percent*/ 100,
+            /*priority*/ 2,
+        )
+        .await;
+        let thread = start_at(&mut harness, &work).await?;
+        harness
+            .turn(
+                &thread,
+                "fixture-exhausted-team",
+                "account-a",
+                "fixture-personal-answer",
+            )
+            .await?;
+
+        let mut usage = available_usage();
+        usage["spend_control"] = json!({"reached": true});
+        let _usage = account_usage(&harness, usage).await;
+        let (_, request) = harness
+            .turn(
+                &thread,
+                "fixture-recovered-team",
+                "account-c",
+                "fixture-team-answer",
+            )
+            .await?;
+        assert_eq!(
+            conversation_messages(&request),
+            vec![
+                ("user".to_string(), "fixture-exhausted-team".to_string()),
+                (
+                    "assistant".to_string(),
+                    "fixture-personal-answer".to_string()
+                ),
+                ("user".to_string(), "fixture-recovered-team".to_string())
+            ]
+        );
+        harness.shutdown().await;
+        Ok(())
+    })
+}
+
 #[test]
 fn quota_fallback_uses_only_permitted_accounts_and_never_probes_an_excluded_account() -> Result<()>
 {

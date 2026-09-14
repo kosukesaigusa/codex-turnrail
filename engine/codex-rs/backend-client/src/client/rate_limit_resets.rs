@@ -31,7 +31,8 @@ impl Client {
         })
     }
 
-    pub(super) async fn get_rate_limit_status(&self) -> Result<RateLimitStatusWithResetCredits> {
+    /// Read backend usage status while preserving the general quota's availability flags.
+    pub async fn get_rate_limit_status(&self) -> Result<RateLimitStatusWithResetCredits> {
         let url = self.rate_limit_status_url();
         let req = self.request(Method::GET, &url).headers(self.headers());
         let (body, ct) = self.exec_request(req, "GET", &url).await?;

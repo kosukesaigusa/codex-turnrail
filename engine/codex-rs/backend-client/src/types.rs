@@ -50,8 +50,9 @@ pub struct RateLimitsWithResetCredits {
     pub rate_limit_upsell: Option<Value>,
 }
 
+/// Backend usage status before conversion into display-oriented rate-limit snapshots.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-pub(crate) struct RateLimitStatusWithResetCredits {
+pub struct RateLimitStatusWithResetCredits {
     #[serde(flatten)]
     pub rate_limits: RateLimitStatusPayload,
     pub rate_limit_reset_credits: Option<RateLimitResetCreditsSummary>,
