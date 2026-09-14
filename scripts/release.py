@@ -263,7 +263,7 @@ def archive(output, tag):
     )
     artifacts = [archive_path, manifest_path, report, notary_report]
     checksum.write_text("".join(f"{sha256(path)}  {path.name}\n" for path in artifacts))
-    return [*artifacts, checksum]
+    return [archive_path]
 
 
 def main():

@@ -4,9 +4,9 @@
 
 Turnrail uses one product version for the app and its bundled Engine. `packaging/Info.plist` is the canonical product version and monotonically increasing build number.
 
-During `0.x` development, a patch release fixes bugs within the same supported Codex combination. A minor release adds features or changes the supported Codex version. `1.0.0` will mark an explicitly stable product contract. Released tags and assets are never moved or replaced.
+During `0.x` development, a patch release fixes bugs within the same supported ChatGPT app and Codex CLI combination. A minor release adds features or changes that supported combination. `1.0.0` will mark an explicitly stable product contract. Released tags and assets are never moved or replaced.
 
-`upstream.toml` records the official app bundle identifier, version, and build together with the Engine source repository, release tag, and commit. The required CLI version is derived from the source release tag. Generate the Swift compatibility contract with `just metadata-write`; `just metadata-check` rejects drift between this contract and the Engine version.
+`upstream.toml` records the ChatGPT app bundle identifier, version, and build together with the Codex Engine source repository, release tag, and commit. The required CLI version is derived from the source release tag. Generate the Swift compatibility contract with `just metadata-write`; `just metadata-check` rejects drift between this contract and the Engine version.
 
 Prepare a version change as ordinary reviewed source:
 
@@ -35,8 +35,10 @@ The command pushes the immutable tag and dispatches `.github/workflows/release.y
 3. Compares stable and experimental app-server schemas, includes component notices, signs every executable and the app, and verifies the signatures.
 4. Runs all three runtime scenarios against the finished app.
 5. Submits a signed ZIP to Apple's notary service, requires `Accepted`, attaches the ticket to the app, and verifies the ticket and Gatekeeper assessment.
-6. Creates the final ZIP from the stapled app, with SHA-256 checksums, source and build metadata, runtime evidence, and a notarization report.
-7. Uploads all artifacts to a Draft Release with notes generated from merged PRs.
+6. Creates the final app ZIP from the stapled app and records its original checksum alongside the build, runtime, and notarization reports.
+7. Uploads only the app ZIP to a Draft Release with a direct download link and notes generated from merged PRs.
+8. Downloads that uploaded asset by its GitHub asset ID and checks its SHA-256 and size against the original archive. The GitHub digest must also match. A mismatch fails the job and leaves the release as a draft with pending verification.
+9. Records successful download verification in the draft notes and retains the detailed verification files as an Actions artifact for 90 days. Publishing remains a separate maintainer action.
 
 The build manifest records the product and upstream versions, source commit, build profile, compiler versions, signer, binary hashes, and notarization report hash. Archive creation rejects uncommitted source, another source revision, changed binaries or app resources, failed or incomplete reports, unnotarized apps, and version mismatches. It verifies the attached ticket and Gatekeeper assessment again before creating the ZIP.
 
@@ -102,18 +104,28 @@ Source publication does not require a signing certificate or notarization creden
 Before publishing a draft:
 
 - Confirm the Apache-2.0 product license and component notices for the distributed binary.
-- Download the Draft Release assets, check `SHA256SUMS`, and extract the ZIP.
+- Require a successful release workflow with completed uploaded-ZIP verification in the draft notes.
+- Download the app ZIP from the Draft Release and extract it for the manual checks below.
 - Verify Gatekeeper behavior and launch on a Mac without development tools.
 - Verify official UI turns, Shell, JavaScript, approvals, account setup, reauthentication, next-turn account switching, and folder rules.
 - Record these results and any limitations in the release notes.
+- Update the README's app download link to the verified release's exact asset URL when publishing. The versioned filename requires a link update for each release.
 
 Publish the same downloaded and verified artifacts using GitHub's release editor. Do not rebuild or replace them after testing. Users install and update manually from GitHub Releases. An updater, a separate distribution site, and Windows support are outside the current scope.
+
+### Verification records
+
+Users only download the app ZIP; no Terminal commands are required. Release notes retain the Turnrail and supported ChatGPT app versions, source commit, archive SHA-256 and size, and the signature, notarization, runtime, and uploaded-file verification results. GitHub also exposes the app asset's SHA-256.
+
+The `turnrail-release-verification` Actions artifact retains `build-manifest.json`, `runtime-verification.json`, `notarization-report.json`, `SHA256SUMS`, and, after successful delivery verification, `upload-verification.json` for 90 days. These files are not public Release assets. The original checksum list covers the app ZIP and all three build reports. Delivery verification checks those local records before comparing both GitHub's asset metadata and the downloaded bytes against the original app ZIP.
+
+If verification fails, the job retains the available records and leaves the draft unpublished. Inspect the failure before taking any publication action; do not replace verified assets or treat a failed run as ready. The workflow never publishes a release automatically. Detailed Actions artifacts expire, while the verification summary remains in the Release notes.
 
 ## Upstream automation
 
 `.github/workflows/upstream.yml` runs every six hours, at minute 17, and can also be started manually. GitHub schedules may be delayed; the workflow is not a time guarantee.
 
-The monitor reads the official app's configured production appcast and the latest stable `openai/codex` GitHub Release independently. The appcast and official app archive use curl with explicit time and size limits; redirects, HTTP failures and malformed responses stop inspection. It maintains one tracking issue when an update or monitoring error exists. An unchanged observation does not rewrite the issue. Recovery closes the issue when no update remains. CLI versions are compared using SemVer precedence, including prerelease identifiers.
+The monitor reads the ChatGPT app's configured production appcast and the latest stable `openai/codex` CLI release independently. The appcast and official app archive use curl with explicit time and size limits; redirects, HTTP failures and malformed responses stop inspection. It maintains one tracking issue when an update or monitoring error exists. An unchanged observation does not rewrite the issue. Recovery closes the issue when no update remains. CLI versions are compared using SemVer precedence, including prerelease identifiers.
 
 A newer CLI alone does not update the Engine. For a newer app build, the macOS job downloads the official archive, validates paths, verifies the Apple signature against OpenAI's signing team and bundle identifier, and checks the exact app version and build. Only then does it read the bundled CLI version and require its corresponding public source release. This can be a prerelease when the signed official app bundles that exact version. The source tag, commit, Engine version and bundled CLI must still match exactly; no nearest-version selection is allowed.
 
@@ -123,12 +135,12 @@ The automation explicitly dispatches `ci.yml` for the candidate branch after cre
 
 Enable **Allow GitHub Actions to create and approve pull requests** in repository Actions settings. Default token permissions remain read-only; write permissions are scoped to the jobs that maintain the tracking issue or prepare an update PR. No automation merges an upstream PR or publishes a binary release.
 
-After CI passes, review the launch contract and complete official UI verification. A supported Codex change needs a Turnrail minor version and build-number increment before release. V8 or zsh changes also require reviewing their pinned component notices under `packaging/licenses/`.
+After CI passes, review the launch contract and complete Codex UI verification in ChatGPT. A change to the supported ChatGPT app or Codex CLI version needs a Turnrail minor version and build-number increment before release. V8 or zsh changes also require reviewing their pinned component notices under `packaging/licenses/`.
 
 ## References
 
 - [Semantic Versioning](https://semver.org/).
 - [GitHub token workflow triggering](https://docs.github.com/en/actions/concepts/security/github_token).
 - [GitHub signing certificate setup](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications).
-- [Official Codex app update feed](https://persistent.oaistatic.com/codex-app-prod/appcast.xml).
+- [Official ChatGPT app update feed](https://persistent.oaistatic.com/codex-app-prod/appcast.xml).
 - [Official Codex source releases](https://github.com/openai/codex/releases).
