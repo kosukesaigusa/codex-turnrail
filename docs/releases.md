@@ -34,10 +34,11 @@ A `v*` tag push starts `.github/workflows/release.yml`. The workflow verifies th
 2. Builds the Engine and Code Mode Host with the optimized upstream `release` profile, and builds the Swift app in release mode.
 3. Compares stable and experimental app-server schemas, includes component notices, signs every executable and the app, and verifies the signatures.
 4. Runs all three runtime scenarios against the finished app.
-5. Creates a ZIP, SHA-256 manifest, source and build metadata, and runtime verification report.
-6. Uploads all artifacts to a Draft Release with notes generated from merged PRs.
+5. Submits a signed ZIP to Apple's notary service, requires `Accepted`, attaches the ticket to the app, and verifies the ticket and Gatekeeper assessment.
+6. Creates the final ZIP from the stapled app, with SHA-256 checksums, source and build metadata, runtime evidence, and a notarization report.
+7. Uploads all artifacts to a Draft Release with notes generated from merged PRs.
 
-The build manifest records the product and upstream versions, source commit, build profile, compiler versions, signer, and binary hashes. Archive creation rejects uncommitted source, another source revision, changed binaries, failed or incomplete runtime reports, and version mismatches.
+The build manifest records the product and upstream versions, source commit, build profile, compiler versions, signer, binary hashes, and notarization report hash. Archive creation rejects uncommitted source, another source revision, changed binaries or app resources, failed or incomplete reports, unnotarized apps, and version mismatches. It verifies the attached ticket and Gatekeeper assessment again before creating the ZIP.
 
 An existing tag whose workflow failed before creating a release can be retried with the workflow's manual `tag` input. Do not move the tag. If a Draft Release already exists, inspect it and retain its assets; the workflow does not overwrite it.
 
@@ -50,8 +51,11 @@ Configure the GitHub environment named `release`:
 | `MACOS_CERTIFICATE_BASE64`   | Secret   | Base64-encoded signing certificate and private key exported as an encrypted `.p12`. |
 | `MACOS_CERTIFICATE_PASSWORD` | Secret   | Password for that `.p12` export.                                                    |
 | `MACOS_SIGNING_IDENTITY`     | Variable | Exact `Developer ID Application: ...` identity, including its team identifier.      |
+| `MACOS_NOTARY_KEY_ID`        | Secret   | App Store Connect Team API Key ID for notarization.                                 |
+| `MACOS_NOTARY_ISSUER_ID`     | Secret   | Issuer ID for that API key.                                                         |
+| `MACOS_NOTARY_KEY_BASE64`    | Secret   | Base64-encoded `.p8` private key for that API key.                                  |
 
-The workflow fails before compilation if any required setting is absent. It imports the certificate into an ephemeral runner keychain and deletes the keychain afterward. Never commit signing files or print secret values. Certificate export and secret registration are maintainer operations; source publication does not require them.
+The environment permits `main` and version tags. The workflow fails before compilation if any required setting is absent or notarization authentication fails. It imports the certificate into an ephemeral runner keychain and deletes the keychain afterward. Notarization uses a private temporary `.p8` file that is removed when the operation exits. Never commit signing files or print secret values. Credential registration is a maintainer operation; source publication does not require it.
 
 To prepare these settings:
 
@@ -62,7 +66,16 @@ To prepare these settings:
 
 Apple Development signing remains available for local development packages. The GitHub distribution workflow requires Developer ID Application signing. ZIP distribution does not need a Developer ID Installer certificate.
 
-The current workflow does not notarize apps and states that fact in the release notes and build manifest. Before general binary publication, add notarization with `notarytool`, staple the ticket to the signed app, and create the final ZIP from that app. Notarization also needs Apple authentication: an Apple Account, an app-specific password, and the matching Team ID, or an appropriate App Store Connect API key. These credentials are separate from the signing certificate and are not consumed by the current workflow.
+Notarization uses the explicitly configured App Store Connect Team API key. All distributed executables are signed with hardened runtime and a secure timestamp. The Code Mode Host retains its required V8 entitlements.
+
+If Apple's processing is still pending after the 45-minute wait, the workflow stops and retains the submission ID, original upload ZIP, build manifest, and runtime report in the `turnrail-notarization-recovery` Actions artifact for seven days. Completed submissions also include Apple's diagnostic log. Restore these files and extract the original app into one output directory at the same tagged source revision, then run:
+
+```sh
+python3 scripts/release.py notarize /absolute/output/directory v0.1.0
+python3 scripts/release.py archive /absolute/output/directory v0.1.0
+```
+
+The notarization command resumes a matching saved submission without uploading again. It rejects changed app contents and uncertain uploads that have no saved submission ID. An `Invalid` or `Rejected` result must be resolved from Apple's log; it never produces a release archive. The final distribution ZIP is created only after successful ticket attachment and validation.
 
 Source publication does not require a signing certificate or notarization credentials.
 
