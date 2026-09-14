@@ -134,6 +134,7 @@ def release_command(arguments):
         "--locked",
         "--profile",
         "release",
+        "--timings",
         "--target",
         "aarch64-apple-darwin",
         "-p",

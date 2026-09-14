@@ -28,7 +28,7 @@ just release-tag
 
 Tagging requires a clean `main` worktree that matches the remote and a successful latest `main` CI run for that exact commit. The tag must match the product version. Existing tags are rejected.
 
-A `v*` tag push starts `.github/workflows/release.yml`. The workflow verifies the tag, source ancestry, metadata, and CI before using the protected `release` environment. It then:
+The command pushes the immutable tag and dispatches `.github/workflows/release.yml` from `main`, with that tag as its explicit input. The workflow rejects other branch refs, then verifies the tag, source ancestry, metadata, and CI before checking out the tagged commit and using the protected `release` environment. It then:
 
 1. Downloads the matching official CLI release and verifies its source commit, archive SHA-256, size, and executable version.
 2. Builds the Engine and Code Mode Host with the optimized upstream `release` profile, and builds the Swift app in release mode.
@@ -40,7 +40,25 @@ A `v*` tag push starts `.github/workflows/release.yml`. The workflow verifies th
 
 The build manifest records the product and upstream versions, source commit, build profile, compiler versions, signer, binary hashes, and notarization report hash. Archive creation rejects uncommitted source, another source revision, changed binaries or app resources, failed or incomplete reports, unnotarized apps, and version mismatches. It verifies the attached ticket and Gatekeeper assessment again before creating the ZIP.
 
-An existing tag whose workflow failed before creating a release can be retried with the workflow's manual `tag` input. Do not move the tag. If a Draft Release already exists, inspect it and retain its assets; the workflow does not overwrite it.
+An existing tag whose workflow failed before creating a release can be retried with the workflow's manual `tag` input, selecting `main` as the workflow ref. If tagging succeeded but dispatch failed, start the same workflow manually; keep the tag. If a Draft Release already exists, inspect it and retain its assets; the workflow does not overwrite it.
+
+## Build cache and measurements
+
+Release runs execute from `main` so that successive tags can share its GitHub Actions cache. The checkout remains pinned to the validated release commit. Cache keys separate compiler, Xcode, SDK, release-profile and build-flag changes, then identify the exact source revision. An older cache within the same compiler contract can supply dependencies; Cargo still validates its fingerprints and builds the selected source with `--locked`. A cache miss performs the ordinary build.
+
+The cache contains Cargo downloads and the Rust target directory. It excludes the signing keychain, app bundle, account data and credential files. The workflow saves it only after the app passes build, signature and runtime verification, and before generated-file cleanup. Signing, protocol comparison, runtime probes and notarization run for every release.
+
+Every distribution build enables Cargo `--timings`. The `turnrail-release-build-report` Actions artifact retains fresh HTML timing reports, elapsed time, `/usr/bin/time -l` resource measurements, runner hardware and memory/swap snapshots for 14 days. Failure reports cannot reuse HTML from a restored cache. BSD time's maximum resident size is not an aggregate peak for all concurrent compiler processes; inspect the Cargo concurrency graph and paging snapshots alongside it.
+
+To compare compiler concurrency and verify a warm restore on the same source revision:
+
+```sh
+gh workflow run release-benchmarks.yml --repo kosukesaigusa/codex-turnrail --ref main
+```
+
+This explicitly runs cold builds with two and three workers, plus a two-worker build on a fresh runner that must restore the exact cache saved by the cold two-worker build. Each case builds the Engine and Host with the same optimized release profile and verifies the packaged runtime. Cold means the Rust target directory is absent before compilation. The two-worker cold build also prepares the main release cache. Each case uploads a separate report before cleanup.
+
+Compare the timing reports and resource measurements before changing `CARGO_BUILD_JOBS` or release optimization settings. Runner variability and cache transfer time are part of the result; one comparison does not establish a universal speedup. Cargo build caches do not skip runtime validation.
 
 ## Signing setup
 

@@ -10,6 +10,26 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 class BuildAppTests(unittest.TestCase):
+    def test_ci_packaging_is_rejected_outside_actions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run(
+                [
+                    "zsh",
+                    str(REPOSITORY / "scripts/build-app.sh"),
+                    str(Path(temporary) / "output"),
+                    "fixture identity",
+                    "/fixture/official-codex",
+                    "release",
+                    "--ci",
+                ],
+                env={**os.environ, "GITHUB_ACTIONS": "false"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--ci requires a GitHub Actions runner", result.stderr)
+            self.assertFalse((Path(temporary) / "output").exists())
+
     def test_output_in_build_directory_is_rejected_before_building(self):
         for output in [
             REPOSITORY / "engine/codex-rs/target/app-output",
