@@ -7,9 +7,9 @@
 [`upstream.toml`](../upstream.toml) is the canonical record:
 
 - Repository: <https://github.com/openai/codex>.
-- Base release: `rust-v0.153.4`.
-- Base commit: `3d2ee51ca2d5db578f328aa75e20aa22c0197c9a`.
-- Matching CLI: `codex-cli 0.153.4`.
+- Base release: `rust-v0.154.0-alpha.6.2`.
+- Base commit: `b5bffd3ec4db487e7e3dec59663875b0ef7b72ca`.
+- Matching CLI: `codex-cli 0.154.0-alpha.6.2`.
 
 The base matches the CLI bundled with the supported official app. An official app update requires renewed compatibility validation. The upstream [LICENSE](../engine/LICENSE), [NOTICE](../engine/NOTICE), component licenses, and lockfiles remain in the source tree.
 

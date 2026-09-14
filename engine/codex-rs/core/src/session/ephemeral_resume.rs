@@ -11,6 +11,10 @@ use codex_protocol::protocol::SessionMetaLine;
 use codex_rollout::RolloutConfigView;
 use std::sync::Arc;
 
+#[cfg(test)]
+#[path = "ephemeral_resume_tests.rs"]
+mod tests;
+
 impl Session {
     /// Captures the startup metadata and model context of an ephemeral session.
     ///
@@ -58,6 +62,7 @@ impl Session {
         let checkpoint = CompactedItem {
             message: String::new(),
             replacement_history: Some(state.history.annotated_items().to_vec()),
+            retained_context: Some(state.history.retained_context().clone()),
             guardian_history: state.history.guardian_history_checkpoint(),
             mcp_resource_origins: self.services.mcp_runtime.resource_origin_checkpoint(),
             window_number: Some(state.auto_compact_window_number()),

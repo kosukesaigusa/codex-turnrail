@@ -312,7 +312,7 @@ impl TurnrailCoordinator {
             &auth,
             base_config.http_client_factory(),
         )
-        .get_rate_limit_status()
+        .get_rate_limit_status(/*supports_luna_reserve*/ false)
         .await
         .map_err(|source| TurnrailError::InspectRateLimits { account_id, source })?;
         let general_rate_limits = usage
