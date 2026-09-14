@@ -5,5 +5,5 @@ commit = "b5bffd3ec4db487e7e3dec59663875b0ef7b72ca"
 
 [app]
 bundle_identifier = "com.openai.codex"
-version = "26.908.40834"
-build = "8881"
+version = "26.908.70816"
+build = "9275"
