@@ -29,6 +29,9 @@ jobs:
             base="$PR_BASE_SHA"
           elif [[ "$EVENT_NAME" == "push" ]]; then
             base="$PUSH_BASE_SHA"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            # Automated candidate PRs explicitly dispatch CI for their branch.
+            base="$(git merge-base refs/remotes/origin/main "$HEAD_SHA")"
           else
             echo "Unsupported CI event: $EVENT_NAME" >&2
             exit 1
