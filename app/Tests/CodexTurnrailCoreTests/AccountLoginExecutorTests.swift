@@ -91,4 +91,39 @@ struct AccountLoginExecutorTests {
       // A launch attempt would throw a file-not-found error instead.
     }
   }
+
+  @Test(.timeLimit(.minutes(1)))
+  func concurrentLoginsDrainOutputWithoutExhaustingTheCooperativeExecutor() async throws {
+    let count = ProcessInfo.processInfo.activeProcessorCount + 1
+    try await withThrowingTaskGroup(of: CommandResult.self) { group in
+      for _ in 0..<count {
+        group.addTask {
+          try await AccountLoginExecutor.live.execute(
+            AccountAuthenticationCommand(
+              executableURL: URL(filePath: "/bin/sh"),
+              arguments: [
+                "-c",
+                """
+                i=0
+                while [ "$i" -lt 5000 ]; do
+                  printf 'output-0123456789\\n'
+                  printf 'error-0123456789\\n' >&2
+                  i=$((i + 1))
+                done
+                """,
+              ],
+              environment: [:]
+            ))
+        }
+      }
+      var completed = 0
+      for try await result in group {
+        #expect(result.exitCode == 0)
+        #expect(result.standardOutput == String(repeating: "output-0123456789\n", count: 5000))
+        #expect(result.standardError == String(repeating: "error-0123456789\n", count: 5000))
+        completed += 1
+      }
+      #expect(completed == count)
+    }
+  }
 }

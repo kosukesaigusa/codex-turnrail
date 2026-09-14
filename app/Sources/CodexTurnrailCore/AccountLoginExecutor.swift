@@ -18,7 +18,12 @@ public struct AccountLoginExecutor: Sendable {
   public static let live = AccountLoginExecutor { command in
     let operation = CancellableLoginProcess()
     return try await withTaskCancellationHandler {
-      try await Task.detached { try operation.run(command) }.value
+      try await withCheckedThrowingContinuation { continuation in
+        // Process and pipe waits need threads outside Swift's cooperative executor.
+        DispatchQueue(label: "CodexTurnrail.AccountLogin.process").async {
+          continuation.resume(with: Result { try operation.run(command) })
+        }
+      }
     } onCancel: {
       operation.cancel()
     }
@@ -51,7 +56,7 @@ private final class CancellableLoginProcess: @unchecked Sendable {
 
     let errorRead = DispatchGroup()
     errorRead.enter()
-    DispatchQueue.global().async {
+    DispatchQueue(label: "CodexTurnrail.AccountLogin.stderr").async {
       let data = error.fileHandleForReading.readDataToEndOfFile()
       self.lock.withLock { self.errorData = data }
       errorRead.leave()
@@ -77,7 +82,9 @@ private final class CancellableLoginProcess: @unchecked Sendable {
       if running && process.isRunning { process.terminate() }
     }
     // Bound cancellation even if this login process ignores SIGTERM.
-    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
+    DispatchQueue(label: "CodexTurnrail.AccountLogin.cancellation").asyncAfter(deadline: .now() + 2)
+    {
+      [weak self] in
       guard let self else { return }
       self.lock.withLock {
         if self.running && self.process.isRunning {
