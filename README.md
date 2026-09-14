@@ -1,8 +1,12 @@
 # Codex Turnrail
 
-A macOS menu bar app for using multiple accounts with Codex in the ChatGPT app, with account rules for each folder.
+A macOS menu bar app for using multiple ChatGPT accounts with Codex in the official ChatGPT app.
 
-This is an independent project with no affiliation with or endorsement from OpenAI. It launches the official ChatGPT macOS app with a dedicated Codex Engine, preserving the official app's bundle and signature.
+Keep your Codex conversations as you switch accounts, with automatic account selection for each folder.
+
+![Codex Turnrail's Switch screen showing demo accounts and their priority for a folder](docs/images/switch.png)
+
+This is an independent project with no affiliation with or endorsement from OpenAI.
 
 ## Install
 
@@ -13,6 +17,10 @@ Requires an Apple silicon Mac running macOS 14 or later and the [supported ChatG
 3. Quit ChatGPT if it is running, open **Codex Turnrail**, and select **Check Compatibility**.
 
 Only the app ZIP is needed. No Terminal commands are required.
+
+> **Usage notice:** Do not use Codex Turnrail to circumvent OpenAI's rate limits or usage limits. You are responsible for complying with the terms that apply to your accounts and your organization's policies. Use at your own risk.
+>
+> OpenAI prohibits "circumvent any rate limits or restrictions" in its [Terms of Use](https://openai.com/policies/row-terms-of-use/) and "violate or circumvent Usage Limits" in its business [Services Agreement, Section 3.3(i)](https://openai.com/policies/services-agreement/) (excerpts).
 
 ## Set up
 
@@ -32,7 +40,7 @@ Removing an account deletes its Turnrail credentials and account settings. Share
 
 ## Development
 
-The Swift app lives in `app/` and the Codex Engine in `engine/`. Use the root `justfile` for builds and checks.
+The Swift app lives in `app/` and the Codex Engine in `engine/`. It launches ChatGPT with a dedicated Codex Engine, preserving the official app's bundle and signature. Use the root `justfile` for builds and checks.
 
 See [Development](docs/development.md) to build from source and [Verification](docs/verification.md) for validation results and remaining checks.
 
