@@ -2,7 +2,7 @@
 
 ## Versioning
 
-Turnrail uses one product version for the app and its bundled Engine. `packaging/Info.plist` is the canonical product version and monotonically increasing build number. The initial product release is planned as `v0.1.0`.
+Turnrail uses one product version for the app and its bundled Engine. `packaging/Info.plist` is the canonical product version and monotonically increasing build number.
 
 During `0.x` development, a patch release fixes bugs within the same supported Codex combination. A minor release adds features or changes the supported Codex version. `1.0.0` will mark an explicitly stable product contract. Released tags and assets are never moved or replaced.
 
@@ -11,7 +11,7 @@ During `0.x` development, a patch release fixes bugs within the same supported C
 Prepare a version change as ordinary reviewed source:
 
 ```sh
-just version 0.1.1
+just version 0.2.1
 just metadata-check
 ```
 
@@ -89,8 +89,8 @@ Notarization uses the explicitly configured App Store Connect Team API key. All 
 If Apple's processing is still pending after the 45-minute wait, the workflow stops and retains the submission ID, original upload ZIP, build manifest, and runtime report in the `turnrail-notarization-recovery` Actions artifact for seven days. Completed submissions also include Apple's diagnostic log. Restore these files and extract the original app into one output directory at the same tagged source revision, then run:
 
 ```sh
-python3 scripts/release.py notarize /absolute/output/directory v0.1.0
-python3 scripts/release.py archive /absolute/output/directory v0.1.0
+python3 scripts/release.py notarize /absolute/output/directory v0.2.0
+python3 scripts/release.py archive /absolute/output/directory v0.2.0
 ```
 
 The notarization command resumes a matching saved submission without uploading again. It rejects changed app contents and uncertain uploads that have no saved submission ID. An `Invalid` or `Rejected` result must be resolved from Apple's log; it never produces a release archive. The final distribution ZIP is created only after successful ticket attachment and validation.
