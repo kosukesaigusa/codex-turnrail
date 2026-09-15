@@ -1,0 +1,109 @@
+name: Optimized Engine
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        type: string
+        required: true
+      identity:
+        type: string
+        required: true
+      key:
+        type: string
+        required: true
+    outputs:
+      artifact_id:
+        value: ${{ jobs.build.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 180
+    outputs:
+      artifact_id: ${{ steps.evidence.outputs.artifact-id }}
+    env:
+      ENGINE_IDENTITY: ${{ inputs.identity }}
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      CODEX_REPO_ROOT: ${{ github.workspace }}/engine
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: "1.95.0"
+      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
+        with:
+          tool: just@1.51.0
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.3"
+      - name: Require the planned runner and compiler
+        run: python3 scripts/engine_artifacts.py assert-runner
+      - name: Identify the release compiler and source cache
+        id: cache-key
+        run: python3 scripts/release_cache.py >> "$GITHUB_OUTPUT"
+      - name: Restore release compilation artifacts
+        id: release-cache
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/codex-rs/target
+          key: ${{ steps.cache-key.outputs.key }}
+          restore-keys: ${{ steps.cache-key.outputs.prefix }}
+      - name: Build the optimized Engine and Code Mode Host
+        run: |
+          python3 scripts/measure_release.py "$RUNNER_TEMP/release-build-report" -- \
+            python3 scripts/build-runtime.py "$RUNNER_TEMP/turnrail-runtime" release --ci
+      - name: Verify the optimized runtime and approval decisions
+        run: |
+          uv sync --project engine/scripts/codex_package/smoke_tests --frozen
+          engine/scripts/codex_package/smoke_tests/.venv/bin/python \
+            tests/integration/verify_runtime.py \
+            "$RUNNER_TEMP/turnrail-runtime" "$RUNNER_TEMP/runtime-verification.json"
+      - name: Save successful compilation cache
+        if: ${{ steps.release-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            engine/codex-rs/target
+          key: ${{ steps.cache-key.outputs.key }}
+      - name: Record the optimized runtime and evidence
+        run: |
+          mkdir "$RUNNER_TEMP/engine-release"
+          python3 scripts/engine_artifacts.py pack "$RUNNER_TEMP/turnrail-runtime" "$RUNNER_TEMP/engine-release/runtime.tar.gz"
+          cp "$RUNNER_TEMP/runtime-verification.json" "$RUNNER_TEMP/engine-release/release-runtime.json"
+          python3 scripts/engine_artifacts.py record release "$RUNNER_TEMP/engine-release"
+      - name: Save the optimized Engine candidate
+        id: evidence
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: turnrail-engine-release-${{ inputs.key }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/engine-release
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain build timings and resource measurements
+        if: ${{ always() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: turnrail-release-build-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-build-report
+          retention-days: 14
+      - name: Clean generated build files
+        if: ${{ always() }}
+        run: python3 scripts/dev.py finish

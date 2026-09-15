@@ -31,7 +31,7 @@ Tagging requires a clean `main` worktree that matches the remote and a successfu
 The command pushes the immutable tag and dispatches `.github/workflows/release.yml` from `main`, with that tag as its explicit input. The workflow rejects other branch refs, then verifies the tag, source ancestry, metadata, and CI before checking out the tagged commit and using the protected `release` environment. It then:
 
 1. Downloads the matching official CLI release and verifies its source commit, archive SHA-256, size, and executable version.
-2. Builds the Engine and Code Mode Host with the optimized upstream `release` profile, and builds the Swift app in release mode.
+2. Resolves a verified optimized Engine artifact with matching source, tooling, and runner inputs. If none remains, it explicitly builds and verifies a new Engine using the parallel CI pipeline. It then builds the Swift app from the tagged source.
 3. Compares stable and experimental app-server schemas, includes component notices, signs every executable and the app, and verifies the signatures.
 4. Runs all three runtime scenarios against the finished app.
 5. Submits a signed ZIP to Apple's notary service, requires `Accepted`, attaches the ticket to the app, and verifies the ticket and Gatekeeper assessment.
@@ -40,17 +40,40 @@ The command pushes the immutable tag and dispatches `.github/workflows/release.y
 8. Downloads that uploaded asset by its GitHub asset ID and checks its SHA-256 and size against the original archive. The GitHub digest must also match. A mismatch fails the job and leaves the release as a draft with pending verification.
 9. Records successful download verification in the draft notes and retains the detailed verification files as an Actions artifact for 90 days. Publishing remains a separate maintainer action.
 
-The build manifest records the product and upstream versions, source commit, build profile, compiler versions, signer, binary hashes, and notarization report hash. Archive creation rejects uncommitted source, another source revision, changed binaries or app resources, failed or incomplete reports, unnotarized apps, and version mismatches. It verifies the attached ticket and Gatekeeper assessment again before creating the ZIP.
+The build manifest records the product and upstream versions, app source commit, build profile, compiler versions, signer, binary hashes, and notarization report hash. For a reused Engine, it also embeds the original Engine source/workflow commits, input identity, producer run and attempt, and hashes of the unsigned runtime and its CI/runtime evidence. The app source commit must still match the exact tagged commit. Archive creation rejects uncommitted source, another source revision, changed binaries or app resources, failed or incomplete reports, unnotarized apps, and version mismatches. It verifies the attached ticket and Gatekeeper assessment again before creating the ZIP.
 
 An existing tag whose workflow failed before creating a release can be retried with the workflow's manual `tag` input, selecting `main` as the workflow ref. If tagging succeeded but dispatch failed, start the same workflow manually; keep the tag. If a Draft Release already exists, inspect it and retain its assets; the workflow does not overwrite it.
 
+## Verified Engine reuse
+
+CI identifies the Engine independently of the Turnrail product version. Its SHA-256 key covers the Git objects for `engine/`, `.github/`, `scripts/`, `tests/`, and the root `justfile`; the target and two build profiles; and the actual Rust compiler, Xcode, SDK, Clang, macOS build, and hosted runner image. These conservative source scopes include the lockfiles, V8 pins, build commands, test selection, runtime probes, and artifact verifier. External compiler overrides are rejected.
+
+Product version, root README, Swift app, and official-app metadata changes do not change this key. Each revision still runs source, Swift app, dependency-policy, spelling, and file-size checks. If a checked scope or the runner/compiler image changes, CI selects a new Engine build.
+
+When no retained successful result matches, two jobs run on separate macOS runners in parallel:
+
+- `engine-checks.yml` builds `dev-small`, runs the existing nextest suites and Clippy, assembles the runtime, and verifies execution and both approval decisions.
+- `engine-release.yml` builds the optimized `release` Engine and Code Mode Host, then verifies that runtime with the same three scenarios. It has no signing credentials.
+
+Only after both jobs succeed does `engine.yml` seal a `turnrail-engine-<input-key>-<run-attempt>` artifact containing the unsigned runtime and its checksummed CI/runtime evidence. It is retained for 90 days. This means two major Engine build stages for new inputs, including additional test-binary compilation and Clippy work within CI. No rebuild is needed in main CI or release packaging while matching evidence remains available. Parallelization reduces elapsed waiting time; it does not reduce the runner minutes used by those two jobs.
+
+Reuse checks GitHub's artifact ID, archive size and SHA-256, run/attempt and workflow provenance, source Git objects, internal checksums, successful test counts, and all runtime scenarios. Only completed successful runs from this repository's CI or release workflow may provide cross-run evidence. Fork PRs can run CI but cannot supply an Engine to another run or a signed release. A release may consume its own newly built Engine only after its Engine gate succeeds. The trust boundary includes contributors with write access to this repository; this is not a mechanism for accepting arbitrary contributor binaries.
+
+Expired, absent, failed-run, and superseded-attempt artifacts explicitly select a new build. API failures, changed inputs within a selected artifact, malformed evidence, and checksum mismatches stop verification; they do not authorize reuse or silently switch to another artifact. Deleted or expired artifacts selected earlier in a run fail that run; rerun CI to plan again.
+
+Use **Re-run all jobs** when retrying a failed Engine pipeline. CI and optimized candidates must come from the same run attempt; **Re-run failed jobs** cannot combine an earlier successful candidate with a later attempt. Candidate artifacts and diagnostic reports include their attempt number, so full retries never overwrite evidence.
+
+Identical Engine keys share a concurrency group with cancellation disabled, so a second producer waits and then looks for the first result. PR and manual CI dispatches for the same branch also share a CI group. GitHub concurrency keeps at most one running and one pending member; a newer pending run can replace an older pending run. Review the latest exact-revision CI result. This does not remove GitHub's approval prompt for a bot-created PR.
+
+The first run after introducing this pipeline builds both profiles because older reports do not satisfy the new evidence contract. Runner image updates and the 90-day retention limit can also require rebuilding unchanged source. The artifact reference and build/reuse reason appear in the Actions logs and plan summary.
+
 ## Build cache and measurements
 
-Release runs execute from `main` so that successive tags can share its GitHub Actions cache. The checkout remains pinned to the validated release commit. Cache keys separate compiler, Xcode, SDK, release-profile and build-flag changes, then identify the exact source revision. An older cache within the same compiler contract can supply dependencies; Cargo still validates its fingerprints and builds the selected source with `--locked`. A cache miss performs the ordinary build.
+The optimized Engine job uses a separate Cargo compilation cache. Its keys separate compiler, Xcode, SDK, release-profile and build-flag changes, then identify the source revision. An older cache within the same compiler contract can supply intermediate compilation outputs; Cargo still validates its fingerprints and builds the selected source with `--locked`. This cache never substitutes for the verified Engine artifact.
 
-The cache contains Cargo downloads and the Rust target directory. It excludes the signing keychain, app bundle, account data and credential files. The workflow saves it only after the app passes build, signature and runtime verification, and before generated-file cleanup. Signing, protocol comparison, runtime probes and notarization run for every release.
+The cache contains Cargo downloads and the Rust target directory. It excludes the signing keychain, app bundle, account data, and credential files. The optimized job saves it only after its runtime passes verification, before generated-file cleanup. Signing, protocol comparison, final-app runtime probes, notarization, and uploaded-ZIP verification run for every release, including when the Engine is reused.
 
-Every distribution build enables Cargo `--timings`. The `turnrail-release-build-report` Actions artifact retains fresh HTML timing reports, elapsed time, `/usr/bin/time -l` resource measurements, runner hardware and memory/swap snapshots for 14 days. Failure reports cannot reuse HTML from a restored cache. BSD time's maximum resident size is not an aggregate peak for all concurrent compiler processes; inspect the Cargo concurrency graph and paging snapshots alongside it.
+Every optimized Engine build enables Cargo `--timings`. Reusing an Engine does not run Cargo or fabricate a new timing report; follow its recorded producer run for the original measurements. The `turnrail-release-build-report-<run-attempt>` Actions artifact retains fresh HTML timing reports, elapsed time, `/usr/bin/time -l` resource measurements, runner hardware and memory/swap snapshots for 14 days. Failure reports cannot reuse HTML from a restored cache. BSD time's maximum resident size is not an aggregate peak for all concurrent compiler processes; inspect the Cargo concurrency graph and paging snapshots alongside it.
 
 To compare compiler concurrency and verify a warm restore on the same source revision:
 
@@ -131,7 +154,7 @@ A newer CLI alone does not update the Engine. For a newer app build, the macOS j
 
 The existing three-way merge script prepares the Engine update. App metadata and the generated Swift contract are updated in the same Draft PR. A conflict or missing source release stops preparation and is linked from the tracking issue. A build number identifies each candidate: existing PRs, closed PRs, and branches with human changes are never overwritten. Inspect an orphaned candidate branch manually after an interrupted publication.
 
-The automation explicitly dispatches `ci.yml` for the candidate branch after creating its PR. This allows validation with the repository's `GITHUB_TOKEN`; no additional GitHub App or personal token is required. GitHub may also display an approval request for the automatic `pull_request` run. Review the candidate's dispatched CI run and exact commit before merging.
+The automation explicitly dispatches `ci.yml` for the candidate branch after creating its PR. This allows validation with the repository's `GITHUB_TOKEN`; no additional GitHub App or personal token is required. GitHub may also display an approval request for the automatic `pull_request` run. Both triggers share a branch concurrency group and the verified Engine result, so approving the second run does not require another successful build for identical inputs. Review the candidate's dispatched CI run and exact commit before merging.
 
 Enable **Allow GitHub Actions to create and approve pull requests** in repository Actions settings. Default token permissions remain read-only; write permissions are scoped to the jobs that maintain the tracking issue or prepare an update PR. No automation merges an upstream PR or publishes a binary release.
 

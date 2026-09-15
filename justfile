@@ -40,6 +40,9 @@ test-tools:
     cd "{{ root }}/engine" && CODEX_REPO_ROOT="{{ root }}/engine" python3 -m unittest discover -s scripts/install -p 'test_*.py'
     cd "{{ root }}/engine" && CODEX_REPO_ROOT="{{ root }}/engine" python3 -m unittest discover -s .github/scripts/macos-signing -p 'test_notarize_with_akv.py'
 
+lint-workflows:
+    actionlint -color
+
 lint-docs:
     pnpm dlx markdownlint-cli2@0.23.2 --config .markdownlint-cli2.jsonc
 
