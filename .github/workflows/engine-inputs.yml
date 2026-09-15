@@ -1,0 +1,41 @@
+name: Engine inputs
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        type: string
+        required: true
+    outputs:
+      identity:
+        value: ${{ jobs.identify.outputs.identity }}
+      key:
+        value: ${{ jobs.identify.outputs.key }}
+      source:
+        value: ${{ jobs.identify.outputs.source }}
+
+permissions:
+  contents: read
+
+jobs:
+  identify:
+    runs-on: macos-15
+    timeout-minutes: 10
+    outputs:
+      identity: ${{ steps.identity.outputs.identity }}
+      key: ${{ steps.identity.outputs.key }}
+      source: ${{ steps.identity.outputs.source }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: "1.95.0"
+      - name: Identify committed Engine inputs and the actual compiler image
+        id: identity
+        run: python3 scripts/engine_artifacts.py identify >> "$GITHUB_OUTPUT"

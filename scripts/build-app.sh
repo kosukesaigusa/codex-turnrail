@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-if [[ "$#" -lt 4 || "$#" -gt 5 ]]; then
-  echo "usage: $0 /output/directory 'Signing Identity' /official/codex dev-small|release [--ci]" >&2
+if [[ "$#" -ne 4 && "$#" -ne 5 && "$#" -ne 7 ]]; then
+  echo "usage: $0 /output/directory 'Signing Identity' /official/codex dev-small|release [--ci [--engine-evidence /verified/engine]]" >&2
   exit 64
 fi
 
@@ -12,7 +12,9 @@ signing_identity="$2"
 official_cli="$3"
 build_profile="$4"
 ci_args=()
-if [[ "$#" -eq 5 ]]; then
+engine_evidence=""
+record_args=()
+if [[ "$#" -ge 5 ]]; then
   if [[ "$5" != --ci ]]; then
     echo "unknown packaging option: $5" >&2
     exit 64
@@ -22,6 +24,14 @@ if [[ "$#" -eq 5 ]]; then
     exit 64
   fi
   ci_args=(--ci)
+fi
+if [[ "$#" -eq 7 ]]; then
+  if [[ "$6" != --engine-evidence || "$7" != /* || "$build_profile" != release ]]; then
+    echo "Engine evidence requires --ci, release, and an absolute evidence directory." >&2
+    exit 64
+  fi
+  engine_evidence="$7"
+  record_args=(--engine-provenance "$engine_evidence/manifest.json")
 fi
 script_directory="${0:A:h}"
 repository_root="${script_directory:h}"
@@ -97,7 +107,11 @@ contents="$staging_app/Contents"
 
 mkdir -p "$contents/MacOS" "$contents/Resources"
 runtime_package="$contents/Resources/engine"
-python3 "$script_directory/build-runtime.py" "$runtime_package" "$build_profile" "${ci_args[@]}"
+if [[ -n "$engine_evidence" ]]; then
+  python3 "$script_directory/engine_artifacts.py" install "$engine_evidence" "$runtime_package"
+else
+  python3 "$script_directory/build-runtime.py" "$runtime_package" "$build_profile" "${ci_args[@]}"
+fi
 
 "$script_directory/verify-protocol-compatibility.sh" "$official_cli" "$runtime_package/bin/codex"
 
@@ -143,7 +157,7 @@ UV_PROJECT_ENVIRONMENT="$staging_root/python-venv" uv sync \
   --project "$engine_repository/scripts/codex_package/smoke_tests" --frozen
 "$staging_root/python-venv/bin/python" "$repository_root/tests/integration/verify_runtime.py" \
   "$output_app/Contents/Resources/engine" "$output_directory/runtime-verification.json"
-python3 "$script_directory/release.py" record "$output_directory" "$build_profile"
+python3 "$script_directory/release.py" record "$output_directory" "$build_profile" "${record_args[@]}"
 
 # The CI workflow saves build reports and the Cargo cache before its final cleanup.
 if [[ ${#ci_args} -eq 0 ]]; then

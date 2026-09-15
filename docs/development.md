@@ -11,7 +11,7 @@ Run product commands from the repository root. Both `app/` and `engine/` are par
 - Node.js 22 and pnpm 10.34.5, as used by CI.
 - Git with `merge-tree --merge-base` support and a configured identity for upstream updates; verified with Git 2.51.0.
 - An Apple Development signing identity for a signed app.
-- cargo-about 0.9.2 for bundled dependency notices and GitHub CLI for release automation.
+- cargo-about 0.9.2 for bundled dependency notices, actionlint 1.7.11 for workflow validation, and GitHub CLI for release automation.
 
 Install the locked JavaScript dependencies before formatting:
 
@@ -34,6 +34,7 @@ The pinned upstream Python SDK requires a uv version that supports its workspace
 | `just fix-engine -p codex-app-server`                          | Apply Clippy fixes for a selected package.                                           |
 | `just test-tools`                                              | Test product tooling and upstream packaging, installation, and notarization helpers. |
 | `just fmt` / `just fmt-check`                                  | Format or check Swift, Python, Rust, Just, Markdown, and upstream source formats.    |
+| `just lint-workflows`                                          | Validate root GitHub Actions workflows, expressions, and reusable workflow calls.    |
 | `just lint-docs`                                               | Lint product Markdown.                                                               |
 | `just storage`                                                 | Check the development free-space reserve.                                            |
 | `just finish`                                                  | Clean generated Rust and Swift build artifacts.                                      |
@@ -95,7 +96,9 @@ The package command:
 
 Success requires every step. An output created before a failure is not a verified app. Existing output apps are never overwritten. The signer is explicit. See [Releases](releases.md) for tagging, signed and notarized Draft Releases, and manual publication checks.
 
-The GitHub release job calls the same packaging script with explicit `--ci`. That mode requires `GITHUB_ACTIONS=true`, retains the shared lock and disabled incremental compilation, and uses a 5 GiB reserve on an ephemeral runner. It leaves generated build files for the workflow to save timing reports and the compilation cache before its final cleanup step. Local packaging retains automatic cleanup and the 30 GiB reserve. The reserve is not a guarantee that compilation will fit the available disk.
+The GitHub release job calls the same packaging script with explicit `--ci --engine-evidence /absolute/verified-engine`. It restores and verifies the selected artifact before importing signing credentials, then installs that unsigned runtime instead of compiling Rust. The final build manifest preserves its original Engine source and evidence independently of the tagged app source. Developer packaging without this option builds the Engine as shown above.
+
+The `--ci` mode requires `GITHUB_ACTIONS=true`, retains the shared lock and disabled incremental compilation, and uses a 5 GiB reserve on an ephemeral runner. It leaves generated build files for the workflow's final cleanup step. The separate optimized Engine job saves timing reports and its compilation cache before cleaning. Local packaging retains automatic cleanup and the 30 GiB reserve. The reserve is not a guarantee that compilation will fit the available disk.
 
 Replace an installed app only after the official ChatGPT app and its Codex Engine have exited. A running Engine may still load resources from its existing bundle path.
 
@@ -125,10 +128,12 @@ The root `.github/workflows/ci.yml` is the entrypoint for pull requests and push
 | Dependency policy     | Cargo dependency license and advisory policy.                                                                                  |
 | Spelling              | Codespell across product and Engine sources.                                                                                   |
 | File size policy      | Changed file sizes with an explicit allowlist.                                                                                 |
-| Engine and runtime    | Engine builds, selected tests, Clippy, package assembly, and runtime scenarios on `macos-15`.                                  |
+| Engine and runtime    | Verified artifact reuse, or parallel CI and optimized builds with selected tests, Clippy, and runtime scenarios on `macos-15`. |
 
-The required check succeeds only when every dependency succeeds; failed, skipped, or cancelled jobs do not pass. The Engine job begins after the lighter checks succeed. Test and runtime reports are retained for seven days.
+The required check succeeds only when every direct dependency succeeds; failed, skipped, or cancelled dependencies do not pass. After the lighter checks, Engine planning chooses either a new parallel CI/optimized build or verified reuse. The Engine gate explicitly requires both build jobs to succeed in build mode, or both to be skipped and a matching artifact to pass verification in reuse mode. A bare skipped Engine job cannot pass CI.
 
-CI uses an ephemeral runner with `dev-small`, disabled incremental compilation, and two workers. It runs app-server, login, model-provider, Code Mode, and Host package tests; core library tests; and account-isolation and zsh-approval core integration suites. Local commands retain the 30 GiB reserve. Signing certificates and real-account credentials are not required by CI.
+Candidate reports are retained for seven days; the combined verified Engine and evidence are retained for 90 days. See [verified Engine reuse](releases.md#verified-engine-reuse) for input scopes, provenance checks, concurrency, and expiry behavior.
+
+Engine checks use an ephemeral runner with `dev-small`, disabled incremental compilation, and two workers. The parallel optimized build uses a separate runner and the upstream `release` profile. It runs app-server, login, model-provider, Code Mode, and Host package tests; core library tests; and account-isolation and zsh-approval core integration suites. Local commands retain the 30 GiB reserve. Signing certificates and real-account credentials are not required by CI.
 
 Upstream workflow definitions remain under `engine/.github/` as vendored source. GitHub discovers only root workflows; the upstream Bazel, cross-platform, SDK, and V8 canary matrices are not automatic product checks. Official UI turns, real-account operations, signing, notarization, Intel macOS, and Windows/Linux packaging require separate validation.

@@ -51,10 +51,27 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-  package:
+  engine-inputs:
     needs: validate
+    uses: ./.github/workflows/engine-inputs.yml
+    with:
+      source: ${{ needs.validate.outputs.sha }}
+
+  engine:
+    needs: engine-inputs
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/engine.yml
+    with:
+      source: ${{ needs.engine-inputs.outputs.source }}
+      identity: ${{ needs.engine-inputs.outputs.identity }}
+      key: ${{ needs.engine-inputs.outputs.key }}
+
+  package:
+    needs: [validate, engine-inputs, engine]
     runs-on: macos-15
-    timeout-minutes: 180
+    timeout-minutes: 90
     environment: release
     permissions:
       contents: write
@@ -63,6 +80,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_BUILD_JOBS: "2"
       CODEX_REPO_ROOT: ${{ github.workspace }}/engine
+      ENGINE_IDENTITY: ${{ needs.engine-inputs.outputs.identity }}
       RELEASE_TAG: ${{ needs.validate.outputs.tag }}
       RELEASE_COMMIT: ${{ needs.validate.outputs.sha }}
     steps:
@@ -103,19 +121,17 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.3"
-      - name: Identify the release compiler and source cache
-        id: cache-key
-        run: python3 scripts/release_cache.py >> "$GITHUB_OUTPUT"
-      - name: Restore release compilation artifacts
-        id: release-cache
-        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            engine/codex-rs/target
-          key: ${{ steps.cache-key.outputs.key }}
-          restore-keys: ${{ steps.cache-key.outputs.prefix }}
+      - name: Restore the verified Engine before loading signing credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.engine.outputs.artifact_id }}
+          PRODUCER_RUN: ${{ needs.engine.outputs.producer_run }}
+        run: |
+          args=()
+          if [[ "$PRODUCER_RUN" == "$GITHUB_RUN_ID" ]]; then
+            args=(--current-run)
+          fi
+          python3 scripts/engine_artifacts.py restore "$ARTIFACT_ID" "$RUNNER_TEMP/verified-engine" "${args[@]}"
       - name: Fetch and verify the pinned official CLI
         env:
           GH_TOKEN: ${{ github.token }}
@@ -152,21 +168,12 @@ jobs:
           subprocess.run(["codesign", "--verify", "--strict", str(probe)], check=True, timeout=60)
           probe.unlink()
           PY
-      - name: Build, sign, and verify the distribution app
+      - name: Assemble, sign, and verify the distribution app
         env:
           SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
         run: |
-          python3 scripts/measure_release.py "$RUNNER_TEMP/release-build-report" -- \
-            scripts/build-app.sh "$RUNNER_TEMP/release" "$SIGNING_IDENTITY" "$RUNNER_TEMP/official-codex" release --ci
-      - name: Save verified release compilation artifacts before cleanup
-        if: ${{ steps.release-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            engine/codex-rs/target
-          key: ${{ steps.cache-key.outputs.key }}
+          scripts/build-app.sh "$RUNNER_TEMP/release" "$SIGNING_IDENTITY" "$RUNNER_TEMP/official-codex" release \
+            --ci --engine-evidence "$RUNNER_TEMP/verified-engine"
       - name: Notarize the app and verify its stapled ticket
         env:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
@@ -215,13 +222,6 @@ jobs:
             ${{ runner.temp }}/release/build-manifest.json
             ${{ runner.temp }}/release/runtime-verification.json
           retention-days: 7
-      - name: Retain build timings and resource measurements
-        if: ${{ always() }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: turnrail-release-build-report
-          path: ${{ runner.temp }}/release-build-report
-          retention-days: 14
       - name: Remove the signing keychain
         if: ${{ always() }}
         run: |

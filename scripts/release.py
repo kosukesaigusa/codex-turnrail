@@ -131,7 +131,7 @@ def verify_report(path):
         raise ValueError("Every required runtime scenario must pass.")
 
 
-def record(output, profile):
+def record(output, profile, engine_provenance):
     metadata = validate(ROOT)
     report = output / "runtime-verification.json"
     verify_report(report)
@@ -163,7 +163,56 @@ def record(output, profile):
         "binaries": runtime_hashes(output),
         "runtime_report_sha256": sha256(report),
     }
+    if engine_provenance is None:
+        manifest["engine"] = {
+            "origin": "source-build",
+            "source_commit": manifest["source_commit"],
+            "profile": profile,
+        }
+    else:
+        from engine_artifacts import expected_identity, read_manifest
+
+        evidence = read_manifest(
+            engine_provenance.parent, expected_identity(), "verified"
+        )
+        if profile != "release":
+            raise ValueError("Verified Engine artifacts require the release profile.")
+        manifest["engine"] = {"origin": "verified-artifact", "evidence": evidence}
     (output / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+
+def validate_engine_source(manifest):
+    from engine_artifacts import digest, identity, revision, source_inputs
+
+    engine = manifest["engine"]
+    if engine["origin"] == "source-build":
+        if (
+            engine["source_commit"] != manifest["source_commit"]
+            or engine["profile"] != manifest["profile"]
+        ):
+            raise ValueError(
+                "The Engine build does not match the app source and profile."
+            )
+    elif engine["origin"] == "verified-artifact":
+        evidence = engine["evidence"]
+        expected = identity(
+            source_inputs(ROOT, manifest["source_commit"]),
+            evidence["identity"]["runner"],
+        )
+        if (
+            manifest["profile"] != "release"
+            or evidence["schema_version"] != 1
+            or evidence["kind"] != "verified"
+            or evidence["identity"] != expected
+            or evidence["key"] != digest(expected)
+        ):
+            raise ValueError(
+                "The Engine evidence does not match the app's Engine inputs."
+            )
+        revision(evidence["source_commit"])
+        revision(evidence["workflow_commit"])
+    else:
+        raise ValueError("The app manifest has an unknown Engine origin.")
 
 
 def validate_distribution(output, tag):
@@ -183,6 +232,7 @@ def validate_distribution(output, tag):
         raise ValueError("The app was built from a different source revision.")
     if run("git", "-C", str(ROOT), "status", "--porcelain"):
         raise ValueError("Commit source changes before preparing a release archive.")
+    validate_engine_source(manifest)
     if manifest["binaries"] != runtime_hashes(output):
         raise ValueError("A packaged binary changed after runtime verification.")
     report = output / "runtime-verification.json"
@@ -282,6 +332,7 @@ def main():
     manifest = commands.add_parser("record")
     manifest.add_argument("output", type=Path)
     manifest.add_argument("profile", choices=("dev-small", "release"))
+    manifest.add_argument("--engine-provenance", type=Path)
     package = commands.add_parser("archive")
     package.add_argument("output", type=Path)
     package.add_argument("tag")
@@ -294,7 +345,7 @@ def main():
         elif args.action == "download-cli":
             download_cli(args.output, validate(ROOT)["upstream"])
         elif args.action == "record":
-            record(args.output, args.profile)
+            record(args.output, args.profile, args.engine_provenance)
         elif args.action == "notary-preflight":
             notarization.preflight(os.environ)
         elif args.action == "notarize":

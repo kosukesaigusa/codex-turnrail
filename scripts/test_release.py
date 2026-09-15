@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import project_metadata as metadata
 import release
+from engine_artifacts import digest, identity
 from release_tag import require_ci
 
 
@@ -27,6 +28,83 @@ class ReleaseTests(unittest.TestCase):
             "UnrelatedValue": "0.1.0",
         }
         (self.root / "packaging/Info.plist").write_bytes(plistlib.dumps(self.info))
+
+    def test_reused_engine_preserves_its_original_source_without_changing_app_source(
+        self,
+    ):
+        source_inputs = {
+            name: "c" * 40
+            for name in ("engine", ".github", "scripts", "tests", "justfile")
+        }
+        inputs = identity(source_inputs, {"rustc": "fixture"})
+        manifest = {
+            "source_commit": "a" * 40,
+            "profile": "release",
+            "engine": {
+                "origin": "verified-artifact",
+                "evidence": {
+                    "schema_version": 1,
+                    "kind": "verified",
+                    "identity": inputs,
+                    "key": digest(inputs),
+                    "source_commit": "b" * 40,
+                    "workflow_commit": "b" * 40,
+                },
+            },
+        }
+        with patch(
+            "engine_artifacts.source_inputs", return_value=source_inputs
+        ) as read:
+            release.validate_engine_source(manifest)
+        read.assert_called_once_with(release.ROOT, "a" * 40)
+        self.assertEqual(manifest["engine"]["evidence"]["source_commit"], "b" * 40)
+        self.assertEqual(manifest["source_commit"], "a" * 40)
+        with (
+            patch("engine_artifacts.source_inputs", return_value={}),
+            self.assertRaisesRegex(ValueError, "Engine inputs"),
+        ):
+            release.validate_engine_source(manifest)
+
+    def test_source_build_and_unknown_origins_cannot_hide_source_drift(self):
+        manifest = {
+            "source_commit": "a" * 40,
+            "profile": "release",
+            "engine": {
+                "origin": "source-build",
+                "source_commit": "a" * 40,
+                "profile": "release",
+            },
+        }
+        release.validate_engine_source(manifest)
+        manifest["engine"]["source_commit"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "source and profile"):
+            release.validate_engine_source(manifest)
+        manifest["engine"]["origin"] = "unknown"
+        with self.assertRaisesRegex(ValueError, "unknown Engine origin"):
+            release.validate_engine_source(manifest)
+
+    def test_reused_engine_cannot_weaken_exact_tagged_app_source_validation(self):
+        manifest = {
+            "version": "0.3.0",
+            "build": "29",
+            "profile": "release",
+            "dirty": False,
+            "source_commit": "a" * 40,
+            "signing_authorities": ["Developer ID Application: Fixture"],
+        }
+        (self.root / "build-manifest.json").write_text(release.json.dumps(manifest))
+        with (
+            patch.object(
+                release, "validate", return_value={"version": "0.3.0", "build": "29"}
+            ),
+            patch.object(release, "run", return_value="b" * 40),
+            patch.object(release, "validate_engine_source") as engine,
+            patch.object(release.subprocess, "run") as signature,
+            self.assertRaisesRegex(ValueError, "different source revision"),
+        ):
+            release.validate_distribution(self.root, "v0.3.0")
+        engine.assert_not_called()
+        signature.assert_not_called()
 
     def test_version_bump_changes_only_release_fields(self):
         release.bump(self.root, "0.2.0")

@@ -30,6 +30,17 @@ jobs:
         with:
           tool: just@1.51.0
 
+      - name: Install the verified actionlint executable
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --silent --show-error --proto '=https' --max-time 60 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.11/actionlint_1.7.11_darwin_arm64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' a21ba7366d8329e7223faee0ed69eb13da27fe8acabb356bb7eb0b7f1e1cb6d8 "$archive" | shasum -a 256 -c -
+          mkdir "$RUNNER_TEMP/actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+
       - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
 
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -50,6 +61,9 @@ jobs:
 
       - name: Check all source formatting
         run: just fmt-check
+
+      - name: Check GitHub Actions workflows
+        run: just lint-workflows
 
       - name: Check Markdown
         run: just lint-docs

@@ -30,6 +30,36 @@ class BuildAppTests(unittest.TestCase):
             self.assertIn("--ci requires a GitHub Actions runner", result.stderr)
             self.assertFalse((Path(temporary) / "output").exists())
 
+    def test_reused_engine_requires_ci_release_and_an_explicit_absolute_directory(self):
+        for profile, directory in (
+            ("dev-small", "/verified/engine"),
+            ("release", "relative"),
+        ):
+            with (
+                self.subTest(profile=profile, directory=directory),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                output = Path(temporary) / "output"
+                result = subprocess.run(
+                    [
+                        "zsh",
+                        str(REPOSITORY / "scripts/build-app.sh"),
+                        str(output),
+                        "fixture identity",
+                        "/fixture/official-codex",
+                        profile,
+                        "--ci",
+                        "--engine-evidence",
+                        directory,
+                    ],
+                    env={**os.environ, "GITHUB_ACTIONS": "true"},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Engine evidence requires", result.stderr)
+                self.assertFalse(output.exists())
+
     def test_output_in_build_directory_is_rejected_before_building(self):
         for output in [
             REPOSITORY / "engine/codex-rs/target/app-output",

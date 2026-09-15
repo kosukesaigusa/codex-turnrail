@@ -1,0 +1,165 @@
+name: Engine CI checks
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        type: string
+        required: true
+      identity:
+        type: string
+        required: true
+      key:
+        type: string
+        required: true
+    outputs:
+      artifact_id:
+        value: ${{ jobs.macos.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS Engine and runtime
+    runs-on: macos-15
+    timeout-minutes: 90
+    outputs:
+      artifact_id: ${{ steps.evidence.outputs.artifact-id }}
+    defaults:
+      run:
+        working-directory: engine/codex-rs
+        shell: bash
+    env:
+      ENGINE_IDENTITY: ${{ inputs.identity }}
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/engine/codex-rs/target
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      RUST_MIN_STACK: "8388608"
+      CODEX_REPO_ROOT: ${{ github.workspace }}/engine
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: "1.95.0"
+          components: clippy
+
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
+        with:
+          tool: cargo-nextest@0.9.103
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.3"
+
+      - name: Require the planned runner and compiler
+        working-directory: .
+        run: python3 scripts/engine_artifacts.py assert-runner
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: turnrail-cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/codex-rs/Cargo.lock') }}
+
+      - name: Configure the verified upstream V8 artifacts
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import sys
+
+          engine = Path(os.environ["CODEX_REPO_ROOT"])
+          sys.path.insert(0, str(engine / "scripts"))
+          from codex_package.targets import TARGET_SPECS
+          from codex_package.v8 import resolve_codex_v8_cargo_env
+
+          values = resolve_codex_v8_cargo_env(TARGET_SPECS["aarch64-apple-darwin"])
+          with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+              for key, value in values.items():
+                  output.write(f"{key}={value}\n")
+          PYTHON
+
+      # CI uses an ephemeral runner, dev-small, and two compiler jobs. The
+      # local just commands retain their separate 30 GiB reserve requirement.
+      - name: Build Engine, Code Mode Host, and integration helpers
+        run: |
+          cargo build --locked --profile dev-small --bins \
+            -p codex-cli -p codex-app-server -p codex-code-mode-host \
+            -p codex-shell-escalation -p codex-rmcp-client -p codex-exec
+
+      - name: Test Engine packages, core library, and selected core integrations
+        run: |
+          cargo nextest run --locked --cargo-profile dev-small --profile default \
+            --no-fail-fast --retries 0 --test-threads 2 \
+            -p codex-core -p codex-app-server -p codex-model-provider \
+            -p codex-login -p codex-code-mode -p codex-code-mode-host \
+            -E 'not package(codex-core) | not kind(test) | test(account_bound_threads) | test(unified_exec_zsh_fork_approvals) | test(unified_exec_zsh_fork_status)'
+
+      - name: Check core and app-server with Clippy
+        run: |
+          cargo clippy --locked --profile dev-small --tests \
+            -p codex-core -p codex-app-server -- -D warnings
+
+      - name: Assemble runtime from the tested binaries
+        run: |
+          python3 ../scripts/build_codex_package.py \
+            --variant codex --target aarch64-apple-darwin \
+            --entrypoint-bin "${CARGO_TARGET_DIR}/dev-small/codex" \
+            --code-mode-host-bin "${CARGO_TARGET_DIR}/dev-small/codex-code-mode-host" \
+            --package-dir "${RUNNER_TEMP}/turnrail-runtime"
+
+      - name: Verify packaged execution and approval decisions
+        run: |
+          uv sync --project ../scripts/codex_package/smoke_tests --frozen
+          ../scripts/codex_package/smoke_tests/.venv/bin/python \
+            ../../tests/integration/verify_runtime.py \
+            "${RUNNER_TEMP}/turnrail-runtime" "${RUNNER_TEMP}/runtime-verification.json"
+
+      - name: Record successful Engine CI evidence
+        working-directory: .
+        run: |
+          mkdir "$RUNNER_TEMP/engine-checks"
+          cp "$RUNNER_TEMP/runtime-verification.json" "$RUNNER_TEMP/engine-checks/ci-runtime.json"
+          cp engine/codex-rs/target/nextest/default/junit.xml "$RUNNER_TEMP/engine-checks/junit.xml"
+          python3 scripts/engine_artifacts.py record checks "$RUNNER_TEMP/engine-checks"
+      - name: Save successful Engine CI evidence
+        id: evidence
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: turnrail-engine-checks-${{ inputs.key }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/engine-checks
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save verification reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: turnrail-engine-verification-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/runtime-verification.json
+            engine/codex-rs/target/nextest/default/junit.xml
+          retention-days: 7
+
+      - name: Check for a clean worktree
+        if: ${{ always() && !cancelled() }}
+        uses: ./engine/.github/actions/check-clean-worktree
+
+      - name: Clean generated build files
+        if: ${{ always() }}
+        working-directory: .
+        run: python3 scripts/dev.py finish
