@@ -41,6 +41,17 @@ The pinned upstream Python SDK requires a uv version that supports its workspace
 
 Select tests according to the changed behavior and `engine/AGENTS.md`. A filtered example does not replace required coverage. Tests remove an inherited `CODEX_TURNRAIL_ROOT` from the child environment so that fixtures cannot accidentally read the user's routing registry. The invoking shell retains its environment.
 
+## UI screenshots
+
+Render the production SwiftUI views with isolated demo accounts:
+
+```sh
+TURNRAIL_SCREENSHOT_DIRECTORY=/absolute/review-directory \
+  just test-app --filter SettingsScreenshots
+```
+
+The opt-in renderer writes `switch.png`, `accounts.png`, and `available-resets.png` at double resolution. It uses a temporary registry and injected readers, without accessing real credentials or making network calls. Inspect these images, then replace `docs/images/switch.png` with the verified Switch image. The renderer is skipped in ordinary test runs.
+
 ## Storage policy
 
 Heavy local commands share a repository lock, require at least 30 GiB of available space before starting, and use the canonical build directories. Engine commands select `dev-small`, disable incremental compilation, and reject conflicting profile or target-directory options. Swift commands use `app/` and reject package or scratch-path redirection.

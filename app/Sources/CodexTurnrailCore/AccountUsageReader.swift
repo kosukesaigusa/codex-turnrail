@@ -2,9 +2,11 @@ import Foundation
 
 public struct AccountRateLimits: Equatable, Sendable {
   public let buckets: [AccountRateLimitBucket]
+  public let resetCredits: AccountResetCredits?
 
-  public init(buckets: [AccountRateLimitBucket]) {
+  public init(buckets: [AccountRateLimitBucket], resetCredits: AccountResetCredits?) {
     self.buckets = buckets
+    self.resetCredits = resetCredits
   }
 }
 
@@ -110,6 +112,8 @@ enum AccountUsageProtocol {
       throw AccountReaderError.invalidResponse
     }
 
+    let resetCredits = try parseResetCredits(result["rateLimitResetCredits"])
+
     if let bucketValue = result["rateLimitsByLimitId"], !(bucketValue is NSNull) {
       guard let bucketValues = bucketValue as? [String: Any] else {
         throw AccountReaderError.invalidResponse
@@ -120,12 +124,22 @@ enum AccountUsageProtocol {
         }
         return try parseBucket(snapshot, explicitLimitID: limitID)
       }
-      return AccountRateLimits(buckets: sortedBuckets(buckets))
+      return AccountRateLimits(buckets: sortedBuckets(buckets), resetCredits: resetCredits)
     }
 
     return AccountRateLimits(
-      buckets: [try parseBucket(historicalSnapshot, explicitLimitID: nil)]
+      buckets: [try parseBucket(historicalSnapshot, explicitLimitID: nil)],
+      resetCredits: resetCredits
     )
+  }
+
+  private static func parseResetCredits(_ value: Any?) throws -> AccountResetCredits? {
+    guard let value, !(value is NSNull) else { return nil }
+    guard let object = value as? [String: Any] else {
+      throw AccountReaderError.invalidResponse
+    }
+    let data = try JSONSerialization.data(withJSONObject: object)
+    return try JSONDecoder().decode(AccountResetCredits.self, from: data)
   }
 
   private static func parseBucket(
