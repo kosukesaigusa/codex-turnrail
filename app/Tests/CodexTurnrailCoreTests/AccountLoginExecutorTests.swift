@@ -15,7 +15,7 @@ struct AccountLoginExecutorTests {
     let pidFile = root.appending(path: "login.pid")
     let script =
       (ignoreTermination ? "trap '' TERM; " : "")
-      + "echo $$ > \"$1\"; exec /bin/sleep 60"
+      + "echo $$ > \"$1.pending\" && /bin/mv \"$1.pending\" \"$1\" && exec /bin/sleep 60"
     let task = Task {
       try await AccountLoginExecutor.live.execute(
         AccountAuthenticationCommand(
