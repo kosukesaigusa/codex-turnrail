@@ -46,9 +46,11 @@ An existing tag whose workflow failed before creating a release can be retried w
 
 ## Verified Engine reuse
 
-CI identifies the Engine independently of the Turnrail product version. Its SHA-256 key covers the Git objects for `engine/`, `.github/`, `scripts/`, `tests/`, and the root `justfile`; the target and two build profiles; and the actual Rust compiler, Xcode, SDK, Clang, macOS build, and hosted runner image. These conservative source scopes include the lockfiles, V8 pins, build commands, test selection, runtime probes, and artifact verifier. External compiler overrides are rejected.
+CI first compares committed Engine inputs: the PR base against its tested merge commit, or the previous main commit against the pushed commit. If these inputs are unchanged, it skips both Engine identification and the Engine pipeline without looking for an artifact or allocating an Engine runner. Missing comparison data fails CI. Manual CI dispatch explicitly requests Engine verification.
 
-Product version, root README, Swift app, and official-app metadata changes do not change this key. Each revision still runs source, Swift app, dependency-policy, spelling, and file-size checks. If a checked scope or the runner/compiler image changes, CI selects a new Engine build.
+The input scopes cover `engine/`, `scripts/`, `tests/`, the root `justfile`, and the CI, source-check, dependency-policy, Engine, and release producer workflows listed in `scripts/engine_artifacts.py`. They include lockfiles, V8 pins, build commands, test selection, runtime probes, and the artifact verifier. The upstream monitor, release-note configuration, root documentation, product version, Swift app, and official-app metadata are outside these scopes. Markdown inside `engine/` remains an Engine input because prompts can be compiled into binaries. Each revision still runs source, Swift app, dependency-policy, spelling, and file-size checks. The final CI gate accepts skipped Engine jobs only when successful change detection explicitly selected that plan; all other required checks must succeed.
+
+When Engine verification is required, its SHA-256 artifact key combines these Git objects with the target, two build profiles, actual Rust compiler, Xcode, SDK, Clang, macOS build, and hosted runner image. External compiler overrides are rejected. Changes to any of these inputs require a matching verified artifact or a new Engine build. The same input scopes govern release artifact reuse, so a monitor-only change does not invalidate an otherwise matching Engine.
 
 When no retained successful result matches, two jobs run on separate macOS runners in parallel:
 

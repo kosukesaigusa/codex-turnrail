@@ -17,7 +17,7 @@ import engine_artifacts as artifacts
 REPO = "example/turnrail"
 SOURCE = "a" * 40
 WORKFLOW_SOURCE = "b" * 40
-INPUTS = {scope: str(index) * 40 for index, scope in enumerate(artifacts.SCOPES)}
+INPUTS = {scope: f"{index:040x}" for index, scope in enumerate(artifacts.SCOPES)}
 IDENTITY = artifacts.identity(INPUTS, {"rustc": "1.95.0", "image_version": "fixture"})
 ENVIRONMENT = {
     "GITHUB_REPOSITORY": REPO,
@@ -86,10 +86,9 @@ class IdentityTests(unittest.TestCase):
                 for call in git.call_args_list
             )
         )
-        self.assertEqual(
-            set(first["source_inputs"]),
-            {"engine", ".github", "scripts", "tests", "justfile"},
-        )
+        self.assertIn(".github/workflows/engine-checks.yml", first["source_inputs"])
+        self.assertNotIn(".github/workflows/upstream.yml", first["source_inputs"])
+        self.assertNotIn(".github", first["source_inputs"])
 
     def test_every_engine_tooling_validation_and_runner_change_invalidates_reuse(self):
         for key in INPUTS:
@@ -245,7 +244,9 @@ class EvidenceTests(unittest.TestCase):
                 )
         with (
             patch.object(
-                artifacts, "remote_inputs", return_value={**INPUTS, ".github": "c" * 40}
+                artifacts,
+                "remote_inputs",
+                return_value={**INPUTS, ".github/workflows/engine.yml": "c" * 40},
             ),
             self.assertRaisesRegex(ValueError, "workflow inputs differ"),
         ):
