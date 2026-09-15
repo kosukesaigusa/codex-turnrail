@@ -146,7 +146,7 @@ If verification fails, the job retains the available records and leaves the draf
 
 ## Upstream automation
 
-`.github/workflows/upstream.yml` runs every six hours, at minute 17, and can also be started manually. GitHub schedules may be delayed; the workflow is not a time guarantee.
+`.github/workflows/upstream.yml` runs every hour, at minute 17, and can also be started manually. GitHub schedules may be delayed; the workflow is not a time guarantee.
 
 The monitor reads the ChatGPT app's configured production appcast and the latest stable `openai/codex` CLI release independently. The appcast and official app archive use curl with explicit time and size limits; redirects, HTTP failures and malformed responses stop inspection. It maintains one tracking issue when an update or monitoring error exists. An unchanged observation does not rewrite the issue. Recovery closes the issue when no update remains. CLI versions are compared using SemVer precedence, including prerelease identifiers.
 

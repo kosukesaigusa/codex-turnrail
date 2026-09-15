@@ -36,4 +36,4 @@ The Draft Release workflow requires Developer ID Application signing. The workfl
 
 Keep upstream updates coordinated with the official CLI version, protocol schema, toolchain, V8 pair, and package behavior. Review automated dependency updates against that constraint rather than independently moving the Engine away from its selected base.
 
-Tag-driven Draft Releases and six-hour upstream monitoring are defined in [Releases](releases.md). Official UI turns and real-account operations remain outside the current PR checks.
+Tag-driven Draft Releases and hourly upstream monitoring are defined in [Releases](releases.md). Official UI turns and real-account operations remain outside the current PR checks.
