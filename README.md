@@ -4,7 +4,7 @@ A macOS menu bar app for using multiple ChatGPT accounts with Codex in the offic
 
 Keep your Codex conversations as you switch accounts, with automatic account selection for each folder.
 
-![Codex Turnrail's Switch screen showing demo accounts and their priority for a folder](docs/images/switch.png)
+![Codex Turnrail's Switch screen showing demo accounts, weekly usage, available resets, and last-used times](docs/images/switch.png)
 
 This is an independent project with no affiliation with or endorsement from OpenAI.
 
@@ -29,6 +29,8 @@ Only the app ZIP is needed. No Terminal commands are required.
 3. Review quota and set account priority in **Switch**, then select **Open Codex** to launch ChatGPT with Turnrail's account routing.
 
 Folder rules apply to subfolders. The Engine selects an available account from the matching rule before each turn. Active turns keep their account; changes apply to the next turn.
+
+**Switch** and **Accounts** show remaining usage, reset times, and last-used times. Select **available resets** to view each saved reset and its expiration date. Reset counts appear only when at least one is available. Reauthentication and account removal are in the **Accounts** menu.
 
 ## Conversation data
 

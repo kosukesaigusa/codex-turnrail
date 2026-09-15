@@ -45,7 +45,8 @@ struct AccountUsageReaderTests {
                 resetsAt: Date(timeIntervalSince1970: 1_788_177_856)
               )
             ),
-          ]
+          ],
+          resetCredits: nil
         ))
     #expect(rateLimits.buckets[0].primary?.remainingPercent == 73)
   }

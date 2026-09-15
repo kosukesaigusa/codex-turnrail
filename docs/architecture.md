@@ -69,11 +69,15 @@ Folder rules control which account may execute the next turn. They do not partit
 
 Quota comes from the account-specific `account/rateLimits/read` response. When `rateLimitsByLimitId` is present, the UI selects the general `codex` bucket and excludes model-specific buckets. Otherwise, it displays the required `rateLimits` snapshot from the same response, as defined by the upstream protocol. Invalid `usedPercent` values are rejected rather than clamped.
 
+The same response provides the optional `rateLimitResetCredits` summary. A missing summary means availability is unknown, not zero. Its `availableCount` is authoritative; `credits: null` means details were not obtained, and a shorter detail list can reflect the server's cap. The detail view reports unavailable or partial details explicitly. Available credits are ordered by expiration, with non-expiring credits last. A null expiry means no expiration; a missing or malformed expiry is an error. Backend titles are used when present; the protocol's `codexRateLimits` type is labeled **Full reset** when its optional title is absent. Unknown reset types are never labeled as full resets. Reset credits are display-only; Turnrail does not consume them.
+
 Account removal first logs out its credentials. Only after logout succeeds does it remove the registry entry, authentication home, timestamp, and assignments. Other accounts retain their order. Shared conversation history in `~/.codex` remains.
 
 ## Management UI
 
 **Switch** compares quota and changes priority for a folder. **Folders** edits assignments. **Accounts** adds, reauthenticates, and removes global accounts. Launch status, **Open Codex**, and **Check Compatibility** sit below the sidebar. **Open Codex** launches ChatGPT with the dedicated Engine. A running ChatGPT app disables duplicate launch.
+
+Both account lists share **Account**, **Usage**, and **Last used** columns. Each usage window groups its name, next reset, remaining percentage, and a thin bar. A positive available-reset count opens the detail sheet; a zero count contributes no row or spacing. Individual credit expirations appear only in that sheet. Authentication status, reauthentication, and removal remain in **Accounts**. Five-hour and weekly windows remain separate within the shared usage column.
 
 The interface is English. Normal screens show the quota, reset times, timestamps, and errors needed for decisions. Detailed errors expose the complete diagnostic JSON without persisting it. Internal paths and nonessential helper text are not shown.
 

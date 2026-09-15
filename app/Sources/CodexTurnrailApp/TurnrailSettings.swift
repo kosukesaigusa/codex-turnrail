@@ -2,7 +2,7 @@ import AppKit
 import CodexTurnrailCore
 import SwiftUI
 
-private enum SettingsPage: String, CaseIterable, Identifiable {
+enum SettingsPage: String, CaseIterable, Identifiable {
   case switchAccount = "Switch"
   case folders = "Folders"
   case accounts = "Accounts"
@@ -31,12 +31,19 @@ private struct PresentedAccountIssue: Identifiable {
 struct TurnrailSettings: View {
   @ObservedObject var model: TurnrailViewModel
   @Environment(\.openURL) private var openURL
+  @Environment(\.timeZone) private var timeZone
   @State private var page: SettingsPage = .switchAccount
   @State private var expandedFolders: Set<AccountRoutingScope> = [.defaultRule]
   @State private var accountPendingRemoval: TurnrailAccount?
   @State private var folderPendingRemoval: DirectoryAccountRule?
   @State private var presentedAccountIssue: PresentedAccountIssue?
   @State private var presentedStatus: StatusNotice?
+  @State private var presentedResetAccount: TurnrailAccount?
+
+  init(model: TurnrailViewModel, page: SettingsPage) {
+    self.model = model
+    self._page = State(initialValue: page)
+  }
 
   var body: some View {
     HStack(spacing: 0) {
@@ -138,6 +145,9 @@ struct TurnrailSettings: View {
       }
       Button("Cancel", role: .cancel) { folderPendingRemoval = nil }
     }
+    .sheet(item: $presentedResetAccount) { account in
+      AccountResetCreditsSheet(account: account, model: model)
+    }
     .sheet(item: $presentedAccountIssue) { presented in
       AccountIssueDetailsSheet(
         account: presented.account,
@@ -198,12 +208,7 @@ struct TurnrailSettings: View {
   private var pageAction: some View {
     switch page {
     case .switchAccount:
-      Button {
-        Task { await model.refreshAllAuthStatuses() }
-      } label: {
-        Label("Refresh Usage", systemImage: "arrow.clockwise")
-      }
-      .disabled(model.isRefreshingAccounts)
+      refreshUsageButton
     case .folders:
       Button {
         if let id = model.chooseRoutingDirectory(replacing: nil) {
@@ -216,23 +221,26 @@ struct TurnrailSettings: View {
       .controlSize(.large)
       .disabled(model.registryLoadError != nil)
     case .accounts:
-      if model.isAddingAccount {
-        HStack(spacing: 12) {
-          ProgressView().controlSize(.small)
-          Text(loginProgressTitle)
-          Button("Cancel") { model.cancelSignIn() }
-            .disabled(model.isCancellingLogin || model.isCompletingLogin)
+      HStack(spacing: 12) {
+        refreshUsageButton
+        if model.isAddingAccount {
+          HStack(spacing: 12) {
+            ProgressView().controlSize(.small)
+            Text(loginProgressTitle)
+            Button("Cancel") { model.cancelSignIn() }
+              .disabled(model.isCancellingLogin || model.isCompletingLogin)
+          }
+          .controlSize(.large)
+        } else {
+          Button {
+            model.addAccount()
+          } label: {
+            Label("Add Account", systemImage: "plus")
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.large)
+          .disabled(model.isSigningIn || model.registryLoadError != nil)
         }
-        .controlSize(.large)
-      } else {
-        Button {
-          model.addAccount()
-        } label: {
-          Label("Add Account", systemImage: "plus")
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .disabled(model.isSigningIn || model.registryLoadError != nil)
       }
     }
   }
@@ -283,17 +291,7 @@ struct TurnrailSettings: View {
       } else {
         ScrollView {
           VStack(spacing: 0) {
-            HStack(spacing: 14) {
-              Text("Account").frame(maxWidth: .infinity, alignment: .leading)
-              Text("Remaining").frame(width: 240, alignment: .leading)
-              Text("Resets").frame(width: 127, alignment: .leading)
-              Color.clear.frame(width: 94, height: 1)
-            }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 13)
-            .background(Color.primary.opacity(0.035))
+            accountTableHeader
             ForEach(model.displayedAccounts) { account in
               Divider()
               switchAccountRow(account)
@@ -306,70 +304,11 @@ struct TurnrailSettings: View {
   }
 
   private func switchAccountRow(_ account: TurnrailAccount) -> some View {
-    let windows = quotaWindows(account)
     let index = model.ruleAccountIDs.firstIndex(of: account.id)
-    return HStack(spacing: 14) {
-      VStack(alignment: .leading, spacing: 5) {
-        AccountIdentityLabel(account: account)
-        if let lastUsed = model.lastUsedByAccountID[account.id] {
-          Group {
-            if case .failed(let details) = lastUsed {
-              Button(lastUsed.label(timeZone: .current)) {
-                model.showAccountError(details)
-              }
-              .buttonStyle(.plain)
-              .foregroundStyle(.red)
-            } else {
-              Text(lastUsed.label(timeZone: .current))
-                .foregroundStyle(.secondary)
-            }
-          }
-          .font(.system(size: 12).monospacedDigit())
-        }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .layoutPriority(1)
-      Group {
-        if let issue = model.accountIssue(for: account) {
-          issueButton(account, issue)
-        } else if windows.isEmpty {
-          Text(usageStatus(account)).foregroundStyle(.secondary)
-        } else {
-          VStack(spacing: 10) {
-            ForEach(windows) { quota in
-              HStack(spacing: 8) {
-                Text("\(quota.window.remainingPercent)%")
-                  .monospacedDigit()
-                  .frame(width: 48, alignment: .trailing)
-                ProgressView(value: Double(quota.window.remainingPercent), total: 100)
-                  .tint(quota.window.remainingPercent <= 10 ? .orange : .blue)
-                  .accessibilityLabel("\(quota.label) remaining")
-              }
-              .frame(height: 18)
-            }
-          }
-        }
-      }
-      .font(.system(size: 13))
-      .frame(width: 240, alignment: .leading)
-
-      VStack(alignment: .leading, spacing: 10) {
-        ForEach(windows) { quota in
-          Group {
-            if let date = quota.window.resetsAt {
-              Text(
-                date,
-                format: .dateTime.month(.abbreviated).day().hour().minute()
-                  .locale(Locale(identifier: "en_US")))
-            } else {
-              Text("Unavailable").foregroundStyle(.secondary)
-            }
-          }
-          .frame(height: 18)
-        }
-      }
-      .font(.system(size: 13).monospacedDigit())
-      .frame(width: 127, alignment: .leading)
+    return HStack(spacing: 18) {
+      accountIdentity(account)
+      usageColumn(account)
+      lastUsedColumn(account)
 
       Group {
         if index == 0 {
@@ -384,7 +323,7 @@ struct TurnrailSettings: View {
           .accessibilityLabel("Prioritize \(account.email)")
         }
       }
-      .frame(width: 94)
+      .frame(width: 90)
     }
     .padding(.horizontal, 18)
     .padding(.vertical, 18)
@@ -500,63 +439,22 @@ struct TurnrailSettings: View {
       } else {
         ScrollView {
           VStack(spacing: 0) {
-            HStack(spacing: 14) {
-              Text("Account").frame(maxWidth: .infinity, alignment: .leading)
-              Text("Plan").frame(width: 120, alignment: .leading)
-              Text("Status").frame(width: 180, alignment: .leading)
-              Color.clear.frame(width: 112, height: 1)
-              Color.clear.frame(width: 24, height: 1)
-            }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 13)
-            .background(Color.primary.opacity(0.035))
+            accountTableHeader
             ForEach(model.registryState.accounts) { account in
               Divider()
-              HStack(spacing: 14) {
-                Text(account.email)
-                  .font(.system(size: 14))
-                  .lineLimit(1)
-                  .truncationMode(.middle)
-                  .textSelection(.enabled)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                Text(account.planType.displayName)
-                  .frame(width: 120, alignment: .leading)
-                Group {
-                  if let issue = model.accountIssue(for: account) {
-                    issueButton(account, issue)
-                  } else {
-                    HStack(spacing: 7) {
-                      Circle()
-                        .fill(
-                          model.authStatusByAccountID[account.id] == .loggedIn ? .green : .orange
-                        )
-                        .frame(width: 7, height: 7)
-                      Text(connectionStatus(account))
-                    }
-                    .foregroundStyle(.secondary)
-                  }
-                }
-                .frame(width: 180, alignment: .leading)
-                Group {
-                  if model.activeLogin == .account(account.id) {
-                    Button("Cancel") {
-                      model.cancelSignIn()
-                    }
-                    .disabled(model.isCancellingLogin || model.isCompletingLogin)
-                    .accessibilityLabel("Cancel sign-in to \(account.email)")
-                  } else {
-                    Button("Sign In Again") {
-                      model.reauthenticate(accountID: account.id)
-                    }
-                    .disabled(accountIsBusy(account) || model.isSigningIn)
-                    .accessibilityLabel("Sign in again to \(account.email)")
-                  }
-                }
-                .controlSize(.large)
-                .frame(width: 112)
+              HStack(spacing: 18) {
+                accountIdentity(account)
+                usageColumn(account)
+                lastUsedColumn(account)
                 Menu {
+                  if model.activeLogin == .account(account.id) {
+                    Button("Cancel Sign-in") { model.cancelSignIn() }
+                      .disabled(model.isCancellingLogin || model.isCompletingLogin)
+                  } else {
+                    Button("Sign In Again") { model.reauthenticate(accountID: account.id) }
+                      .disabled(accountIsBusy(account) || model.isSigningIn)
+                  }
+                  Divider()
                   Button("Remove Account", role: .destructive) { accountPendingRemoval = account }
                     .disabled(accountIsBusy(account))
                 } label: {
@@ -566,6 +464,7 @@ struct TurnrailSettings: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .frame(width: 90, alignment: .trailing)
                 .accessibilityLabel("Account actions for \(account.email)")
               }
               .font(.system(size: 13))
@@ -577,6 +476,100 @@ struct TurnrailSettings: View {
         }
       }
     }
+  }
+
+  private var refreshUsageButton: some View {
+    Button {
+      Task { await model.refreshAllAuthStatuses() }
+    } label: {
+      Label("Refresh Usage", systemImage: "arrow.clockwise")
+    }
+    .disabled(model.isRefreshingAccounts)
+  }
+
+  private var accountTableHeader: some View {
+    HStack(spacing: 18) {
+      Text("Account").frame(maxWidth: .infinity, alignment: .leading)
+      Text("Usage").frame(width: 270, alignment: .leading)
+      Text("Last used").frame(width: 82, alignment: .leading)
+      Color.clear.frame(width: 90, height: 1)
+    }
+    .font(.system(size: 13, weight: .medium))
+    .foregroundStyle(.secondary)
+    .padding(.horizontal, 18)
+    .padding(.vertical, 13)
+    .background(Color.primary.opacity(0.035))
+  }
+
+  private func accountIdentity(_ account: TurnrailAccount) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+      Text(account.email)
+        .font(.system(size: 14))
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .textSelection(.enabled)
+      HStack(spacing: 8) {
+        Text(account.planType.displayName).foregroundStyle(.secondary)
+        if page == .accounts {
+          if let issue = model.accountIssue(for: account) {
+            issueButton(account, issue)
+          } else {
+            HStack(spacing: 5) {
+              Circle()
+                .fill(model.authStatusByAccountID[account.id] == .loggedIn ? .green : .orange)
+                .frame(width: 6, height: 6)
+              Text(connectionStatus(account)).foregroundStyle(.secondary)
+            }
+          }
+        }
+      }
+      .font(.system(size: 12))
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .layoutPriority(1)
+  }
+
+  private func usageColumn(_ account: TurnrailAccount) -> some View {
+    Group {
+      if model.accountIssue(for: account) != nil {
+        if page == .switchAccount {
+          Button("Usage unavailable") { page = .accounts }
+            .buttonStyle(.link)
+        } else {
+          Text("Unavailable").foregroundStyle(.secondary)
+        }
+      } else if case .available(let limits) = model.usageStatusByAccountID[account.id] {
+        AccountUsageSummary(limits: limits) { presentedResetAccount = account }
+      } else {
+        Text(usageStatus(account)).foregroundStyle(.secondary)
+      }
+    }
+    .font(.system(size: 13))
+    .frame(width: 270, alignment: .leading)
+  }
+
+  private func lastUsedColumn(_ account: TurnrailAccount) -> some View {
+    Group {
+      switch model.lastUsedByAccountID[account.id] {
+      case .used(let date):
+        VStack(alignment: .leading, spacing: 3) {
+          Text(UsageTimestampFormat.date.string(from: date, timeZone: timeZone))
+          Text(UsageTimestampFormat.time.string(from: date, timeZone: timeZone))
+            .foregroundStyle(.secondary)
+        }
+        .accessibilityLabel(date.formatted(date: .complete, time: .shortened))
+      case .neverUsed:
+        Text("—").foregroundStyle(.secondary).accessibilityLabel("Never used")
+      case .failed(let details):
+        Button("Read error") { model.showAccountError(details) }
+          .buttonStyle(.plain)
+          .foregroundStyle(.red)
+      case nil:
+        Text("Checking").foregroundStyle(.secondary)
+      }
+    }
+    .font(.system(size: 12).monospacedDigit())
+    .frame(width: 82, alignment: .leading)
   }
 
   private func issueButton(_ account: TurnrailAccount, _ issue: TurnrailViewModel.AccountIssue)
@@ -610,40 +603,12 @@ struct TurnrailSettings: View {
   }
 
   private func usageStatus(_ account: TurnrailAccount) -> String {
-    if model.authStatusByAccountID[account.id] == .loggedOut { return "Sign-in Required" }
-    if model.authStatusByAccountID[account.id] == .loginInProgress { return "Signing In" }
+    if model.authStatusByAccountID[account.id] == .loggedOut { return "Unavailable" }
+    if model.authStatusByAccountID[account.id] == .loginInProgress { return "Checking" }
     switch model.usageStatusByAccountID[account.id] {
     case .checking, nil: return "Checking"
     case .available: return "Unavailable"
     case .failed: return "Usage Error"
-    }
-  }
-
-  private struct QuotaWindow: Identifiable {
-    let id: String
-    let label: String
-    let window: AccountRateLimitWindow
-  }
-
-  private func quotaWindows(_ account: TurnrailAccount) -> [QuotaWindow] {
-    guard case .available(let limits) = model.usageStatusByAccountID[account.id] else { return [] }
-    return limits.buckets.filter { $0.limitID == "codex" || $0.limitID == nil }.flatMap { bucket in
-      [("Primary", bucket.primary), ("Secondary", bucket.secondary)].compactMap { name, window in
-        guard let window else { return nil }
-        let label: String
-        if let minutes = window.windowDurationMinutes {
-          if minutes.isMultiple(of: 1440) {
-            label = "\(minutes / 1440)d"
-          } else if minutes.isMultiple(of: 60) {
-            label = "\(minutes / 60)h"
-          } else {
-            label = "\(minutes)m"
-          }
-        } else {
-          label = name
-        }
-        return QuotaWindow(id: "\(bucket.id):\(name)", label: label, window: window)
-      }
     }
   }
 

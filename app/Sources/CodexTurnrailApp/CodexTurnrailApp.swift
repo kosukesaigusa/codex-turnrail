@@ -18,7 +18,7 @@ struct CodexTurnrailApp: App {
     .menuBarExtraStyle(.menu)
 
     Settings {
-      TurnrailSettings(model: model)
+      TurnrailSettings(model: model, page: .switchAccount)
         .frame(width: 1120, height: 740)
     }
   }

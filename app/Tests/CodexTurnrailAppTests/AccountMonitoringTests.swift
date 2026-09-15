@@ -229,14 +229,15 @@ private actor IdentityGate {
 }
 
 private func usage(used: Int) throws -> AccountRateLimits {
-  AccountRateLimits(buckets: [
-    AccountRateLimitBucket(
-      limitID: "codex", name: nil,
-      primary: try AccountRateLimitWindow(
-        usedPercent: used, windowDurationMinutes: 300,
-        resetsAt: Date(timeIntervalSince1970: 2_000_000_000)
-      ),
-      secondary: nil
-    )
-  ])
+  AccountRateLimits(
+    buckets: [
+      AccountRateLimitBucket(
+        limitID: "codex", name: nil,
+        primary: try AccountRateLimitWindow(
+          usedPercent: used, windowDurationMinutes: 300,
+          resetsAt: Date(timeIntervalSince1970: 2_000_000_000)
+        ),
+        secondary: nil
+      )
+    ], resetCredits: nil)
 }

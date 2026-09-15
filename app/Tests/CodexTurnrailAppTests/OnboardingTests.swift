@@ -151,7 +151,7 @@ struct OnboardingTests {
       },
       isApplicationRunning: { false },
       identityReader: fixture.identityReader,
-      usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: []) }
+      usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: [], resetCredits: nil) }
     )
     let check = model.refreshCompatibility()
     #expect(check.title == "ChatGPT Not Found")
@@ -176,7 +176,7 @@ struct OnboardingTests {
       compatibilityProbe: { _, _ in supportedCompatibilityReport() },
       isApplicationRunning: { true },
       identityReader: fixture.identityReader,
-      usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: []) }
+      usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: [], resetCredits: nil) }
     )
     model.refreshCompatibility()
     model.refreshApplicationState()
@@ -261,7 +261,7 @@ private struct OnboardingFixture {
       compatibilityProbe: { _, _ in supportedCompatibilityReport() },
       isApplicationRunning: { false },
       identityReader: identity,
-      usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: []) }
+      usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: [], resetCredits: nil) }
     )
     model.refreshCompatibility()
     return model
