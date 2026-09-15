@@ -15,6 +15,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    name: Classify Engine changes
+    runs-on: ubuntu-24.04
+    outputs:
+      engine_required: ${{ steps.changes.outputs.engine_required }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare committed Engine inputs
+        id: changes
+        run: |
+          python3 scripts/ci_changes.py > "$RUNNER_TEMP/ci-changes"
+          cat "$RUNNER_TEMP/ci-changes"
+          cat "$RUNNER_TEMP/ci-changes" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/ci-changes" >> "$GITHUB_STEP_SUMMARY"
+
   checks:
     name: Source and app checks
     uses: ./.github/workflows/source-checks.yml
@@ -33,7 +51,8 @@ jobs:
 
   engine-inputs:
     name: Engine inputs
-    needs: [checks, dependencies, spelling, blob-size]
+    needs: [changes, checks, dependencies, spelling, blob-size]
+    if: ${{ needs.changes.outputs.engine_required == 'true' }}
     uses: ./.github/workflows/engine-inputs.yml
     with:
       source: ${{ github.sha }}
@@ -50,7 +69,16 @@ jobs:
   required:
     name: CI required
     if: ${{ always() }}
-    needs: [checks, dependencies, spelling, blob-size, engine-inputs, engine]
+    needs:
+      [
+        changes,
+        checks,
+        dependencies,
+        spelling,
+        blob-size,
+        engine-inputs,
+        engine,
+      ]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

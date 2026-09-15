@@ -22,7 +22,20 @@ from project_metadata import ROOT
 from release import RUNTIME_BINARIES, sha256, verify_report
 from upstream_watch import github
 
-SCOPES = ("engine", ".github", "scripts", "tests", "justfile")
+SCOPES = (
+    "engine",
+    "scripts",
+    "tests",
+    "justfile",
+    ".github/workflows/ci.yml",
+    ".github/workflows/source-checks.yml",
+    ".github/workflows/dependency-policy.yml",
+    ".github/workflows/engine-inputs.yml",
+    ".github/workflows/engine.yml",
+    ".github/workflows/engine-checks.yml",
+    ".github/workflows/engine-release.yml",
+    ".github/workflows/release.yml",
+)
 KINDS = {
     "checks": {"ci-runtime.json", "junit.xml"},
     "release": {"release-runtime.json", "runtime.tar.gz"},
@@ -60,11 +73,23 @@ def source_inputs(root, commit):
 
 def remote_inputs(repository, commit):
     revision(commit)
-    data = github(f"repos/{repository}/git/trees/{commit}")
-    if data["truncated"] is not False:
-        raise ValueError("The source tree response is truncated.")
-    entries = {entry["path"]: entry["sha"] for entry in data["tree"]}
-    return {path: entries[path] for path in SCOPES}
+    trees = {}
+
+    def entries(tree):
+        if tree not in trees:
+            data = github(f"repos/{repository}/git/trees/{tree}")
+            if data["truncated"] is not False:
+                raise ValueError("The source tree response is truncated.")
+            trees[tree] = {entry["path"]: entry["sha"] for entry in data["tree"]}
+        return trees[tree]
+
+    inputs = {}
+    for path in SCOPES:
+        value = commit
+        for component in path.split("/"):
+            value = entries(value)[component]
+        inputs[path] = value
+    return inputs
 
 
 def runner_contract():
