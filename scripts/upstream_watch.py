@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Observe ChatGPT app and Codex CLI releases in one upstream tracking issue."""
+"""Track ChatGPT updates and monitoring failures; report standalone CLI releases."""
 
 import argparse
 import json
@@ -14,7 +14,6 @@ from project_metadata import (
     ROOT,
     VERSION,
     codex_version,
-    codex_version_key,
     read_upstream,
     version_tuple,
 )
@@ -159,7 +158,7 @@ def report_body(observation):
     supported = observation["supported"]
     lines = [
         ISSUE_MARKER,
-        "This issue tracks ChatGPT app and Codex CLI updates and monitoring failures.",
+        "This issue tracks unsupported ChatGPT app updates and monitoring failures.",
         "",
         f"Supported ChatGPT app: {supported['app']['version']} "
         f"({supported['app']['build']}).",
@@ -173,24 +172,43 @@ def report_body(observation):
         lines.append(
             f"Latest ChatGPT app: [{app['version']} ({app['build']})]({APPCAST_URL})."
         )
-    if observation["cli"] is not None:
-        cli = observation["cli"]
-        pending |= codex_version_key(cli["tag"]) > codex_version_key(
-            supported["codex"]["tag"]
-        )
-        lines.append(f"Latest stable Codex CLI: [{cli['tag']}]({cli['url']}).")
     for source, error in observation["errors"].items():
         lines.extend(["", f"{source} monitoring failed: {error}"])
     lines.extend(
         [
             "",
-            "CLI releases alone do not change the Engine base. An app candidate must",
-            "pass signature inspection and expose a matching public CLI source release",
-            "before an update PR is prepared.",
-            "Official UI verification is still required.",
+            "Turnrail follows the CLI bundled with the supported ChatGPT app.",
+            "Standalone CLI releases are recorded in the Actions summary and do not",
+            "trigger Engine updates or keep this issue open.",
         ]
     )
+    if app_candidate(observation):
+        lines.extend(
+            [
+                "",
+                "An app candidate must pass signature inspection and expose a matching",
+                "public CLI source release before an update PR is prepared.",
+                "Official UI verification is required before release.",
+            ]
+        )
+    elif not pending:
+        lines.extend(
+            ["", "No unsupported ChatGPT app update or monitoring failure remains."]
+        )
     return "\n".join(lines) + "\n", pending
+
+
+def summary_body(observation):
+    body, _ = report_body(observation)
+    _, content = body.split("\n", 1)
+    summary = "## Upstream observation\n\n" + content
+    if observation["cli"] is not None:
+        cli = observation["cli"]
+        summary += (
+            f"\nLatest stable Codex CLI (reference only): "
+            f"[{cli['tag']}]({cli['url']}).\n"
+        )
+    return summary
 
 
 def update_issue(repository, observation):
@@ -239,13 +257,21 @@ def main():
     report = commands.add_parser("report")
     report.add_argument("observation", type=Path)
     report.add_argument("--repository", required=True)
+    summary = commands.add_parser("summary")
+    summary.add_argument("observation", type=Path)
     args = parser.parse_args()
     try:
         if args.action == "scan":
             observation = observe(read_upstream(ROOT))
             args.output.write_text(json.dumps(observation, indent=2) + "\n")
-            print(report_body(observation)[0])
+            print(summary_body(observation), end="")
             return 1 if observation["errors"] else 0
+        if args.action == "summary":
+            print(
+                summary_body(json.loads(args.observation.read_text())),
+                end="",
+            )
+            return 0
         issue = update_issue(args.repository, json.loads(args.observation.read_text()))
         if issue is not None:
             print(issue["html_url"])
