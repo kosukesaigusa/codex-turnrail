@@ -131,9 +131,20 @@ After an update, review the Engine diff and dependency locks, update the support
 
 ## Continuous integration
 
-The root `.github/workflows/ci.yml` is the entrypoint for pull requests and pushes to `main`. All jobs use the same repository revision.
+The Actions list groups workflows by the prefix in their display names:
 
-| Workflow              | Checks                                                                                                                         |
+| Prefix         | Purpose                                                 | Entrypoints                                                                                  |
+| -------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `[🔍CI]`       | Validate changes.                                       | `Checks` runs on pull requests, pushes to `main`, and manual requests.                       |
+| `[🚀CD]`       | Prepare the signed, notarized app for publication.      | `Draft release` runs manually for an existing release tag.                                   |
+| `[🔧Util]`     | Monitor upstream releases or measure build performance. | `Monitor ChatGPT updates` runs hourly and manually; `Benchmark Engine builds` runs manually. |
+| `[♻️Reusable]` | Shared jobs called by other workflows.                  | These have only `workflow_call` triggers and are not independent entrypoints.                |
+
+Use these prefixes for new workflows. Workflow filenames identify automation calls; job names identify CI checks. Changing a display name does not change either identifier.
+
+The root `.github/workflows/ci.yml` (`[🔍CI] Checks`) is the entrypoint for pull requests and pushes to `main`. All jobs use the same repository revision.
+
+| Job                   | Checks                                                                                                                         |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Source and app checks | Formatting, Markdown, Engine source policies, Python tooling, Swift release build and tests, shell syntax, and plist metadata. |
 | Dependency policy     | Cargo dependency license and advisory policy.                                                                                  |

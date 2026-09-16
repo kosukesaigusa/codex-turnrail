@@ -1,4 +1,4 @@
-name: Codex upstream
+name: "[🔧Util] Monitor ChatGPT updates"
 
 on:
   schedule:
