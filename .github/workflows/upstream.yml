@@ -37,6 +37,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/upstream_watch.py scan "$RUNNER_TEMP/upstream.json"
+      - name: Summarize upstream observations
+        if: ${{ !cancelled() }}
+        run: python3 scripts/upstream_watch.py summary "$RUNNER_TEMP/upstream.json" >> "$GITHUB_STEP_SUMMARY"
       - name: Maintain the upstream tracking issue
         if: ${{ !cancelled() }}
         env:

@@ -1,6 +1,8 @@
 """Verify update selection, independent failures, and notification deduplication."""
 
 import copy
+import io
+import json
 import subprocess
 import tempfile
 import unittest
@@ -69,16 +71,54 @@ class UpstreamWatchTests(unittest.TestCase):
         self.assertFalse(watch.app_candidate(observed))
         self.assertTrue(watch.report_body(observed)[1])
 
-    def test_new_cli_does_not_prepare_an_app_update(self):
-        self.data["cli"]["tag"] = "rust-v9.0.0"
-        self.assertTrue(watch.report_body(self.data)[1])
-        self.assertFalse(watch.app_candidate(self.data))
-
-    def test_stable_cli_after_the_app_prerelease_remains_a_visible_update(self):
+    def test_standalone_cli_releases_are_reference_only(self):
         self.data["supported"]["codex"]["tag"] = "rust-v0.154.0-alpha.6.2"
-        self.data["cli"]["tag"] = "rust-v0.154.0"
-        self.assertTrue(watch.report_body(self.data)[1])
-        self.assertFalse(watch.app_candidate(self.data))
+        for tag in ("rust-v0.153.0", "rust-v0.154.0", "rust-v9.0.0"):
+            with self.subTest(tag=tag):
+                self.data["cli"]["tag"] = tag
+                body, pending = watch.report_body(self.data)
+                self.assertFalse(pending)
+                self.assertFalse(watch.app_candidate(self.data))
+                self.assertNotIn("Latest stable Codex CLI", body)
+                self.assertNotIn(f"[{tag}](", body)
+                summary = watch.summary_body(self.data)
+                self.assertIn("Latest stable Codex CLI (reference only)", summary)
+                self.assertIn(f"[{tag}]({self.data['cli']['url']})", summary)
+                self.assertNotIn(watch.ISSUE_MARKER, summary)
+                with patch.object(watch, "github", return_value=[]) as api:
+                    self.assertIsNone(watch.update_issue("owner/repo", self.data))
+                self.assertEqual(api.call_count, 1)
+                self.assertEqual(api.call_args.kwargs, {})
+
+    def test_summary_command_reports_cli_without_touching_github(self):
+        self.data["cli"]["tag"] = "rust-v9.0.0"
+        with tempfile.TemporaryDirectory() as temporary:
+            observation = Path(temporary) / "upstream.json"
+            observation.write_text(json.dumps(self.data))
+            with (
+                patch.object(
+                    watch.sys, "argv", ["upstream_watch", "summary", str(observation)]
+                ),
+                patch.object(watch.sys, "stdout", new_callable=io.StringIO) as output,
+                patch.object(watch, "github") as api,
+            ):
+                self.assertEqual(watch.main(), 0)
+            api.assert_not_called()
+            self.assertIn("rust-v9.0.0", output.getvalue())
+            self.assertIn("## Upstream observation", output.getvalue())
+
+    def test_cli_lookup_failure_still_requires_attention(self):
+        with (
+            patch.object(watch, "fetch_appcast", return_value=self.data["app"]),
+            patch.object(watch, "latest_cli", side_effect=OSError("CLI unavailable")),
+        ):
+            observed = watch.observe(self.supported)
+        self.assertIsNone(observed["cli"])
+        self.assertEqual(observed["errors"], {"cli": "CLI unavailable"})
+        self.assertTrue(watch.report_body(observed)[1])
+        self.assertIn(
+            "cli monitoring failed: CLI unavailable", watch.summary_body(observed)
+        )
 
     def test_public_prerelease_must_have_the_exact_requested_tag(self):
         tag = "rust-v0.154.0-alpha.6.2"
@@ -146,6 +186,7 @@ class UpstreamWatchTests(unittest.TestCase):
         self.assertEqual(api.call_count, 1)
 
     def test_recovery_closes_the_existing_issue(self):
+        self.data["cli"]["tag"] = "rust-v9.0.0"
         prior = copy.deepcopy(self.data)
         prior["errors"]["app"] = "HTTP 403"
         body, _ = watch.report_body(prior)
@@ -153,6 +194,57 @@ class UpstreamWatchTests(unittest.TestCase):
         with patch.object(watch, "github", side_effect=[[issue], {}]) as api:
             watch.update_issue("owner/repo", self.data)
         self.assertEqual(api.call_args.kwargs["payload"]["state"], "closed")
+
+    def test_closes_the_existing_cli_only_issue(self):
+        self.data["cli"]["tag"] = "rust-v9.0.0"
+        issue = {
+            "title": watch.ISSUE_TITLE,
+            "body": watch.ISSUE_MARKER + "\nLatest stable Codex CLI: rust-v9.0.0.\n",
+            "number": 2,
+            "state": "open",
+        }
+        with patch.object(watch, "github", side_effect=[[issue], {}]) as api:
+            watch.update_issue("owner/repo", self.data)
+        self.assertEqual(api.call_args.args[0], "repos/owner/repo/issues/2")
+        self.assertEqual(api.call_args.kwargs["method"], "PATCH")
+        self.assertEqual(api.call_args.kwargs["payload"]["state"], "closed")
+
+    def test_cli_changes_do_not_reopen_or_rewrite_the_closed_issue(self):
+        body, _ = watch.report_body(self.data)
+        issue = {
+            "title": watch.ISSUE_TITLE,
+            "body": body,
+            "number": 2,
+            "state": "closed",
+        }
+        self.data["cli"]["tag"] = "rust-v9.0.0"
+        with patch.object(watch, "github", return_value=[issue]) as api:
+            self.assertEqual(watch.update_issue("owner/repo", self.data), issue)
+        self.assertEqual(api.call_count, 1)
+        self.assertEqual(api.call_args.kwargs, {})
+
+    def test_app_updates_and_monitoring_failures_reopen_the_same_issue(self):
+        body, _ = watch.report_body(self.data)
+        issue = {
+            "title": watch.ISSUE_TITLE,
+            "body": body,
+            "number": 2,
+            "state": "closed",
+        }
+        for reason in ("new_app", "app", "cli", "candidate"):
+            with self.subTest(reason=reason):
+                observation = copy.deepcopy(self.data)
+                if reason == "new_app":
+                    observation["app"]["build"] = str(
+                        int(self.supported["app"]["build"]) + 1
+                    )
+                else:
+                    observation["errors"][reason] = "Inspection failed"
+                with patch.object(watch, "github", side_effect=[[issue], {}]) as api:
+                    watch.update_issue("owner/repo", observation)
+                self.assertEqual(api.call_args.args[0], "repos/owner/repo/issues/2")
+                self.assertEqual(api.call_args.kwargs["method"], "PATCH")
+                self.assertEqual(api.call_args.kwargs["payload"]["state"], "open")
 
     def test_human_issue_with_the_same_title_is_preserved(self):
         self.data["errors"]["app"] = "HTTP 403"
