@@ -28,6 +28,8 @@ class ReleaseTests(unittest.TestCase):
             "UnrelatedValue": "0.1.0",
         }
         (self.root / "packaging/Info.plist").write_bytes(plistlib.dumps(self.info))
+        (self.root / metadata.VERSION_GENERATED).parent.mkdir(parents=True)
+        metadata.write_product_version(self.root)
 
     def test_reused_engine_preserves_its_original_source_without_changing_app_source(
         self,
@@ -106,7 +108,9 @@ class ReleaseTests(unittest.TestCase):
         engine.assert_not_called()
         signature.assert_not_called()
 
-    def test_version_bump_changes_only_release_fields(self):
+    def test_version_bump_updates_the_displayed_version_and_preserves_other_fields(
+        self,
+    ):
         release.bump(self.root, "0.2.0")
         self.assertEqual(
             plistlib.loads((self.root / "packaging/Info.plist").read_bytes()),
@@ -115,6 +119,10 @@ class ReleaseTests(unittest.TestCase):
                 "CFBundleShortVersionString": "0.2.0",
                 "CFBundleVersion": "27",
             },
+        )
+        self.assertIn(
+            'static let current = "0.2.0"',
+            (self.root / metadata.VERSION_GENERATED).read_text(),
         )
 
     def test_invalid_or_nonincreasing_versions_preserve_metadata(self):
@@ -139,6 +147,11 @@ class ReleaseTests(unittest.TestCase):
         metadata.validate(self.root, tag="v0.1.0")
         with self.assertRaisesRegex(ValueError, "Release tag"):
             metadata.validate(self.root, tag="v0.2.0")
+        displayed_version = self.root / metadata.VERSION_GENERATED
+        displayed_version.write_text(metadata.product_version_swift("0.0.9"))
+        with self.assertRaisesRegex(ValueError, "Turnrail app version is stale"):
+            metadata.validate(self.root)
+        metadata.write_product_version(self.root)
         generated.write_text(
             generated.read_text().replace(upstream["app"]["build"], "99999")
         )
