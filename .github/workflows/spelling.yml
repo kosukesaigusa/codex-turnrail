@@ -1,4 +1,4 @@
-name: Spelling
+name: "[♻️Reusable] Check spelling"
 
 on:
   workflow_call:

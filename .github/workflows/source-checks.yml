@@ -1,4 +1,4 @@
-name: Source and app checks
+name: "[♻️Reusable] Check source and app"
 
 on:
   workflow_call:

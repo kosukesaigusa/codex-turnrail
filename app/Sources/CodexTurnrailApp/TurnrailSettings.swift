@@ -696,6 +696,12 @@ private struct TurnrailStatusControls: View {
         Text("Check Compatibility").frame(maxWidth: .infinity)
       }
       .controlSize(.large)
+      Text("v\(TurnrailVersion.current)")
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+        .accessibilityLabel("Codex Turnrail version \(TurnrailVersion.current)")
+        .padding(.top, 2)
     }
     .font(.system(size: 12))
 

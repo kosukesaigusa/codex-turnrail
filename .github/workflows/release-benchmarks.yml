@@ -1,4 +1,4 @@
-name: Release build benchmarks
+name: "[🔧Util] Benchmark Engine builds"
 
 on:
   workflow_dispatch:
