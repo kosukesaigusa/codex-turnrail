@@ -1,4 +1,4 @@
-name: Measure release build
+name: "[♻️Reusable] Measure Engine build"
 
 on:
   workflow_call:

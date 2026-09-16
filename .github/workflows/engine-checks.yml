@@ -1,4 +1,4 @@
-name: Engine CI checks
+name: "[♻️Reusable] Test Engine"
 
 on:
   workflow_call:

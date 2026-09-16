@@ -4,6 +4,8 @@
 
 Turnrail uses one product version for the app and its bundled Engine. `packaging/Info.plist` is the canonical product version and monotonically increasing build number.
 
+The Settings sidebar displays this product version. `just metadata-write` generates `TurnrailVersion.generated.swift` from the plist, and `just metadata-check` rejects a stale display version. `just version` updates both the plist and the generated display version.
+
 During `0.x` development, a patch release fixes bugs within the same supported ChatGPT app and Codex CLI combination. A minor release adds features or changes that supported combination. `1.0.0` will mark an explicitly stable product contract. Released tags and assets are never moved or replaced.
 
 `upstream.toml` records the ChatGPT app bundle identifier, version, and build together with the Codex Engine source repository, release tag, and commit. The required CLI version is derived from the source release tag. Generate the Swift compatibility contract with `just metadata-write`; `just metadata-check` rejects drift between this contract and the Engine version.

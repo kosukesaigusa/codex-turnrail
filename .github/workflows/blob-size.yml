@@ -1,4 +1,4 @@
-name: File size policy
+name: "[♻️Reusable] Check file sizes"
 
 on:
   workflow_call:

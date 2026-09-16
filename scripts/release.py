@@ -14,7 +14,14 @@ import urllib.request
 from pathlib import Path
 
 import notarization
-from project_metadata import ROOT, cli_version, product_version, validate, version_tuple
+from project_metadata import (
+    ROOT,
+    cli_version,
+    product_version,
+    validate,
+    version_tuple,
+    write_product_version,
+)
 from upstream_watch import github, source_release
 
 APP_NAME = "Codex Turnrail.app"
@@ -46,6 +53,7 @@ def bump(root, version):
     info["CFBundleShortVersionString"] = version
     info["CFBundleVersion"] = str(int(build) + 1)
     path.write_bytes(plistlib.dumps(info, sort_keys=False))
+    write_product_version(root)
 
 
 def check_cli(path, metadata):

@@ -1,4 +1,4 @@
-name: Dependency policy
+name: "[♻️Reusable] Check dependencies"
 
 on:
   workflow_call:

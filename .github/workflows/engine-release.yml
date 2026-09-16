@@ -1,4 +1,4 @@
-name: Optimized Engine
+name: "[♻️Reusable] Build optimized Engine"
 
 on:
   workflow_call:
