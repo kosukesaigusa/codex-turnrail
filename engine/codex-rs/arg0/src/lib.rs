@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 use std::ffi::OsString;
 use std::fs::File;
 use std::future::Future;
@@ -72,7 +73,10 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
         let _ = args.next();
         let file = match args.next() {
             Some(file) => file,
-            None => std::process::exit(1),
+            None => {
+                eprintln!("Missing executable for intercepted command");
+                std::process::exit(1);
+            }
         };
         let argv = args.collect::<Vec<_>>();
 
@@ -81,14 +85,20 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
             .build()
         {
             Ok(runtime) => runtime,
-            Err(_) => std::process::exit(1),
+            Err(error) => {
+                eprintln!("Failed to initialize intercepted command runtime: {error}");
+                std::process::exit(1);
+            }
         };
         let exit_code = runtime.block_on(
             codex_shell_escalation::run_shell_escalation_execve_wrapper(file, argv),
         );
         match exit_code {
             Ok(exit_code) => std::process::exit(exit_code),
-            Err(_) => std::process::exit(1),
+            Err(error) => {
+                eprintln!("Failed to execute intercepted command: {error:#}");
+                std::process::exit(1);
+            }
         }
     }
 

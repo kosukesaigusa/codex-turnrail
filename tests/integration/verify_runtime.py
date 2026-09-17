@@ -201,14 +201,6 @@ stream_max_retries = 0
             final_text in json.dumps(notifications), "Expected final assistant message"
         )
         if decision is None:
-            outputs = json.dumps(tool_outputs)
-            require(
-                str(package / "codex-path/rg") in outputs, "Bundled rg was not selected"
-            )
-            require(
-                "ripgrep" in outputs and "CODE_MODE_HOST_OK" in outputs,
-                "Missing command output",
-            )
             result_blocks = [
                 block["text"]
                 for block in tool_outputs[0]
@@ -221,7 +213,15 @@ stream_max_retries = 0
             executions = json.loads(result_blocks[0])["results"]
             require(
                 [item["exit_code"] for item in executions] == [0, 0],
-                "Parallel commands failed",
+                f"Parallel commands failed: {json.dumps(executions)}",
+            )
+            outputs = json.dumps(tool_outputs)
+            require(
+                str(package / "codex-path/rg") in outputs, "Bundled rg was not selected"
+            )
+            require(
+                "ripgrep" in outputs and "CODE_MODE_HOST_OK" in outputs,
+                "Missing command output",
             )
             commands = [
                 item["params"]["item"]["command"]
