@@ -19,6 +19,10 @@ use core_test_support::zsh_fork::zsh_fork_runtime;
 use core_test_support::zsh_fork::zsh_fork_test_builder;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+#[cfg(unix)]
+use std::process::Command;
 use std::time::Duration;
 use test_case::test_case;
 
@@ -132,6 +136,25 @@ async fn intercepted_approval_preserves_command_status(
     assert_eq!(
         target.exists(),
         expected_status == ExecCommandStatus::Declined
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn intercepted_command_reports_transport_failure_without_executing() -> Result<()> {
+    let output = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+        .arg0("codex-execve-wrapper")
+        .args(["/bin/echo", "echo", "COMMAND_MUST_NOT_RUN"])
+        .env_clear()
+        .env("CODEX_ESCALATE_SOCKET", "-1")
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stdout, Vec::<u8>::new());
+    assert_eq!(
+        String::from_utf8(output.stderr)?,
+        "Failed to execute intercepted command: CODEX_ESCALATE_SOCKET is not a valid file descriptor: -1\n"
     );
     Ok(())
 }

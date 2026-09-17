@@ -1,3 +1,4 @@
+// Modified for Codex Turnrail.
 use std::io;
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
@@ -51,7 +52,8 @@ pub async fn run_shell_escalation_execve_wrapper(
         .send(EscalateRequest {
             file: file.clone().into(),
             argv: argv.clone(),
-            workdir: AbsolutePathBuf::current_dir()?,
+            workdir: AbsolutePathBuf::current_dir()
+                .context("failed to resolve intercepted command working directory")?,
             env,
         })
         .await

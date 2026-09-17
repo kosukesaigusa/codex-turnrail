@@ -38,6 +38,13 @@ impl Session {
             parent_thread_id: configuration.parent_thread_id,
             timestamp: chrono::Utc::now().to_rfc3339(),
             cwd: configuration.cwd().to_path_buf(),
+            runtime_workspace_roots: Some(
+                configuration
+                    .runtime_workspace_roots
+                    .iter()
+                    .map(codex_utils_absolute_path::AbsolutePathBuf::to_path_buf)
+                    .collect(),
+            ),
             originator: configuration.originator.clone(),
             cli_version: env!("CARGO_PKG_VERSION").to_string(),
             agent_nickname: source.get_nickname(),
