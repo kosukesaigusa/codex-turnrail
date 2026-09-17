@@ -15,8 +15,12 @@ async fn account_replacement_preserves_verified_user_answers() -> anyhow::Result
         |config| config.ephemeral = true,
     )
     .await;
+    let workspace = tempfile::tempdir()?;
+    let workspace_root =
+        codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(workspace.path())?;
     let retained = {
         let mut state = source.state.lock().await;
+        state.session_configuration.runtime_workspace_roots = vec![workspace_root.clone()];
         assert!(
             state
                 .history
@@ -37,6 +41,14 @@ async fn account_replacement_preserves_verified_user_answers() -> anyhow::Result
     let InitialHistory::Resumed(resumed) = source.ephemeral_resume_history().await? else {
         anyhow::bail!("An account replacement must capture resumable history");
     };
+    let metadata = resumed.history.iter().find_map(|item| match item {
+        RolloutItem::SessionMeta(line) => Some(&line.meta),
+        _ => None,
+    });
+    assert_eq!(
+        metadata.and_then(|meta| meta.runtime_workspace_roots.as_ref()),
+        Some(&vec![workspace_root.to_path_buf()])
+    );
     let checkpoint = resumed.history.iter().find_map(|item| match item {
         RolloutItem::Compacted(checkpoint) => Some(checkpoint),
         _ => None,

@@ -3,8 +3,10 @@ mod amazon_bedrock;
 mod auth;
 mod bearer_auth_provider;
 mod models_endpoint;
+mod models_identity;
 mod provider;
 mod shared_state;
+pub mod test_support;
 
 pub use models_endpoint::fetch_remote_models;
 

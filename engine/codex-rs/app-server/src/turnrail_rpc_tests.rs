@@ -303,6 +303,9 @@ impl RpcHarness {
             state_db: Some(state_db),
             config_warnings: Vec::new(),
             session_source: SessionSource::VSCode,
+            user_verification: Arc::new(crate::user_verification::Service::new(Arc::clone(
+                &auth_manager,
+            ))),
             auth_manager,
             installation_id: ACCOUNT_A.to_string(),
             code_mode_session_provider: None,
@@ -318,7 +321,9 @@ impl RpcHarness {
             turnrail_root,
             server,
             processor,
-            session: Arc::new(ConnectionSessionState::new()),
+            session: Arc::new(ConnectionSessionState::new(
+                crate::transport::ConnectionOrigin::Stdio,
+            )),
             messages,
             notifications: VecDeque::new(),
             next_request_id: 1,
