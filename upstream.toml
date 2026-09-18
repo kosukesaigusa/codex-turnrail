@@ -1,9 +1,9 @@
 [codex]
 repository = "https://github.com/openai/codex.git"
-tag = "rust-v0.155.0-alpha.2.6"
-commit = "bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6"
+tag = "rust-v0.155.0-alpha.9"
+commit = "434535bddfaf405a032f57be3c1096dd25ff6312"
 
 [app]
 bundle_identifier = "com.openai.codex"
-version = "26.911.61220"
-build = "9647"
+version = "26.915.31029"
+build = "9771"

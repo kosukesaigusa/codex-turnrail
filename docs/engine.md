@@ -7,9 +7,9 @@
 [`upstream.toml`](../upstream.toml) is the canonical record:
 
 - Repository: <https://github.com/openai/codex>.
-- Base release: `rust-v0.155.0-alpha.2.6`.
-- Base commit: `bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6`.
-- Matching CLI: `codex-cli 0.155.0-alpha.2.6`.
+- Base release: `rust-v0.155.0-alpha.9`.
+- Base commit: `434535bddfaf405a032f57be3c1096dd25ff6312`.
+- Matching CLI: `codex-cli 0.155.0-alpha.9`.
 
 The base matches the Codex CLI bundled with the supported ChatGPT macOS app. A ChatGPT app update requires renewed compatibility validation. The upstream [LICENSE](../engine/LICENSE), [NOTICE](../engine/NOTICE), component licenses, and lockfiles remain in the source tree.
 
