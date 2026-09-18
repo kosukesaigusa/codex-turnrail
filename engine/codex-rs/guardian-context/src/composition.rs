@@ -6,6 +6,7 @@
 
 use codex_context_fragments::ContextualUserFragment;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::ImageReference;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::TruncationPolicy;
 use codex_protocol::user_input::UserInput;
@@ -209,17 +210,27 @@ impl CollectedContext {
                     let items = evidence
                         .items
                         .into_iter()
-                        .map(|item| match item {
+                        .filter_map(|item| match item {
                             UserInput::Text { text, .. } => {
-                                Ok(Budgeted::required(ContentItem::InputText { text }))
+                                Some(Ok(Budgeted::required(ContentItem::InputText { text })))
                             }
-                            UserInput::Image { image_url, detail } => Ok(Budgeted::optional(
-                                ContentItem::InputImage { image_url, detail },
+                            UserInput::Image {
+                                image: ImageReference::Inline { image_url },
+                                detail,
+                            } => Some(Ok(Budgeted::optional(
+                                ContentItem::InputImage {
+                                    image: ImageReference::Inline { image_url },
+                                    detail,
+                                },
                                 BudgetPriority::Image,
-                            )),
-                            _ => Err(SectionError::UnsupportedDelivery {
+                            ))),
+                            UserInput::Image {
+                                image: ImageReference::File { .. },
+                                ..
+                            } => None,
+                            _ => Some(Err(SectionError::UnsupportedDelivery {
                                 section: "node_repl_evidence",
-                            }),
+                            })),
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     (
@@ -281,9 +292,17 @@ impl ComposedContext {
                         }));
                         continue;
                     }
-                    ContentItem::InputImage { image_url, detail } => {
-                        UserInput::Image { image_url, detail }
-                    }
+                    ContentItem::InputImage {
+                        image: ImageReference::Inline { image_url },
+                        detail,
+                    } => UserInput::Image {
+                        image: ImageReference::Inline { image_url },
+                        detail,
+                    },
+                    ContentItem::InputImage {
+                        image: ImageReference::File { .. },
+                        ..
+                    } => continue,
                     ContentItem::InputAudio { .. } | ContentItem::OutputText { .. } => {
                         return Err(SectionError::UnsupportedDelivery {
                             section: section.id,
@@ -311,6 +330,10 @@ impl ComposedContext {
                                     }
                                 }));
                             }
+                            ContentItem::InputImage {
+                                image: ImageReference::File { .. },
+                                ..
+                            } => {}
                             content => user_content.push(content),
                         }
                     }
