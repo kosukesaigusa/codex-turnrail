@@ -2,7 +2,6 @@
 """Prepare product versions and verified, immutable draft release artifacts."""
 
 import argparse
-import hashlib
 import json
 import os
 import plistlib
@@ -14,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 import notarization
+from github_api import github
 from project_metadata import (
     ROOT,
     cli_version,
@@ -22,24 +22,14 @@ from project_metadata import (
     version_tuple,
     write_product_version,
 )
-from upstream_watch import github, source_release
+from runtime_evidence import RUNTIME_BINARIES, sha256, verify_report
+from upstream_watch import source_release
 
 APP_NAME = "Codex Turnrail.app"
-RUNTIME_BINARIES = (
-    "bin/codex",
-    "bin/codex-code-mode-host",
-    "codex-path/rg",
-    "codex-resources/zsh/bin/zsh",
-)
 
 
 def run(*arguments):
     return subprocess.check_output(arguments, text=True).strip()
-
-
-def sha256(path):
-    with path.open("rb") as source:
-        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def bump(root, version):
@@ -126,17 +116,6 @@ def runtime_hashes(output):
         output / APP_NAME / "Contents/MacOS/CodexTurnrailApp"
     )
     return hashes
-
-
-def verify_report(path):
-    report = json.loads(path.read_text())
-    expected = {"code_mode", "approval_accept", "approval_decline"}
-    if not isinstance(report, list) or len(report) != len(expected):
-        raise ValueError("The runtime verification report is incomplete.")
-    if {case["case"] for case in report} != expected or any(
-        case["passed"] is not True for case in report
-    ):
-        raise ValueError("Every required runtime scenario must pass.")
 
 
 def record(output, profile, engine_provenance):

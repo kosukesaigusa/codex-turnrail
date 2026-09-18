@@ -7,8 +7,8 @@ import subprocess
 import sys
 
 from engine_artifacts import git
+from github_api import github
 from project_metadata import ROOT, VERSION, version_tuple
-from upstream_watch import github
 
 
 def download_url(repository, tag):
@@ -68,7 +68,7 @@ def dispatch_ci(repository, branch):
     github(
         f"repos/{repository}/actions/workflows/ci.yml/dispatches",
         method="POST",
-        payload={"ref": branch, "inputs": {"scope": "readme"}},
+        payload={"ref": branch, "inputs": {"scope": "auto"}},
     )
 
 
@@ -112,8 +112,7 @@ def prepare(root, repository, tag):
                 "## Test plan\n\n"
                 "- [x] Confirm the latest stable release and its uploaded app asset.\n"
                 "- [ ] README formatting and Markdown checks.\n\n"
-                "CI verifies that only README.md changed before skipping "
-                "app and Engine checks."
+                "CI selects checks from the actual changed files."
             ),
         },
     )

@@ -89,7 +89,7 @@ class ReleaseReadmeTests(unittest.TestCase):
             self.calls[1],
             (
                 "repos/fixture/product/actions/workflows/ci.yml/dispatches",
-                {"ref": "docs/release-v0.6.0", "inputs": {"scope": "readme"}},
+                {"ref": "docs/release-v0.6.0", "inputs": {"scope": "auto"}},
             ),
         )
 

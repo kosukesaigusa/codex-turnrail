@@ -4,38 +4,42 @@
 import json
 import os
 
-REQUIRED = {"changes"}
-SOURCE = {"checks", "dependencies", "spelling", "blob-size"}
-DOCS = {"readme"}
-ENGINE = {"engine-inputs", "engine"}
+REQUIRED = {"changes", "checks", "spelling", "blob-size"}
+CONDITIONAL = {
+    "dependencies": "dependencies_required",
+    "engine-inputs": "engine_required",
+    "engine": "engine_required",
+}
+OUTPUTS = {
+    "tooling_required",
+    "app_required",
+    "engine_required",
+    "dependencies_required",
+}
 
 
 def main():
     needs = json.loads(os.environ["NEEDS"])
-    if set(needs) != REQUIRED | SOURCE | DOCS | ENGINE:
+    if set(needs) != REQUIRED | set(CONDITIONAL):
         raise SystemExit(
             "The required CI job has incomplete or unexpected dependencies."
         )
     if needs["changes"]["result"] != "success":
         raise SystemExit("CI change detection did not succeed.")
-    required = needs["changes"]["outputs"]["engine_required"]
-    docs = needs["changes"]["outputs"]["readme_only"]
-    if required not in {"true", "false"} or docs not in {"true", "false"}:
-        raise SystemExit("Change detection must return true or false for each plan.")
-    if docs == "true" and required != "false":
-        raise SystemExit("README-only changes cannot require Engine verification.")
-    skipped = SOURCE if docs == "true" else DOCS
-    if required == "false":
-        skipped = skipped | ENGINE
-    failures = sorted(
-        (name, dependency["result"])
-        for name, dependency in needs.items()
-        if dependency["result"] != ("skipped" if name in skipped else "success")
-    )
-    if failures:
-        for name, result in failures:
-            print(f"CI dependency did not succeed: {name}: {result}")
-        raise SystemExit(1)
+    plan = needs["changes"]["outputs"]
+    if set(plan) != OUTPUTS or any(
+        value not in {"true", "false"} for value in plan.values()
+    ):
+        raise SystemExit("Change detection must return true or false for every impact.")
+    if plan["engine_required"] == "true" and plan["dependencies_required"] != "true":
+        raise SystemExit("Engine verification requires dependency checks.")
+    for name, dependency in needs.items():
+        skip = name in CONDITIONAL and plan[CONDITIONAL[name]] == "false"
+        expected = "skipped" if skip else "success"
+        if dependency["result"] != expected:
+            raise SystemExit(
+                f"CI dependency did not match its plan: {name}: {dependency['result']}"
+            )
     print("All required checks succeeded; skipped jobs matched the change plan.")
 
 

@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--scope", choices=("all", "tooling", "app", "engine"), default="all"
+    )
     args = parser.parse_args()
     swift = ["swift", "format"]
     swift += ["lint", "--strict"] if args.check else ["format", "--in-place"]
@@ -25,12 +28,10 @@ def main():
     if args.check:
         python_format.append("--check")
         just_format.append("--check")
-    commands = [
-        swift,
+    tooling = [
         [*python_format, "scripts", "tests"],
         [*python_lint, "scripts", "tests"],
         just_format,
-        ["just", "--justfile", "engine/justfile", "fmt-check" if args.check else "fmt"],
         [
             "pnpm",
             "--dir",
@@ -48,8 +49,31 @@ def main():
             "../.github/**/*.yml",
             "../.markdownlint-cli2.jsonc",
         ],
-        ["pnpm", "--dir", "engine", "run", "format" if args.check else "format:fix"],
     ]
+    groups = {
+        "app": [swift],
+        "tooling": tooling,
+        "engine": [
+            [
+                "just",
+                "--justfile",
+                "engine/justfile",
+                "fmt-check" if args.check else "fmt",
+            ],
+            [
+                "pnpm",
+                "--dir",
+                "engine",
+                "run",
+                "format" if args.check else "format:fix",
+            ],
+        ],
+    }
+    commands = (
+        [command for group in groups.values() for command in group]
+        if args.scope == "all"
+        else groups[args.scope]
+    )
     try:
         for command in commands:
             subprocess.run(command, cwd=ROOT, check=True)

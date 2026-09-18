@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from github_api import github
 from project_metadata import (
     GENERATED,
     ROOT,
@@ -20,7 +21,7 @@ from project_metadata import (
     supported_swift,
 )
 from sync_upstream import UpstreamError, update
-from upstream_watch import app_candidate, download_app_file, github, source_release
+from upstream_watch import app_candidate, download_app_file, source_release
 
 
 def inspect_app(candidate, directory):

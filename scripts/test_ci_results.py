@@ -1,4 +1,4 @@
-"""Allow only planned Engine skips without weakening other required checks."""
+"""Allow only planned job skips without weakening required checks."""
 
 import copy
 import io
@@ -10,28 +10,19 @@ from unittest.mock import patch
 import check_ci_results
 
 
-def needs_data(required, docs=False):
+def needs_data(engine, dependencies, app=False, tooling=False):
     needs = {name: {"result": "success"} for name in check_ci_results.REQUIRED}
-    needs["changes"]["outputs"] = {
-        "engine_required": str(required).lower(),
-        "readme_only": str(docs).lower(),
+    plan = {
+        "engine_required": str(engine).lower(),
+        "dependencies_required": str(dependencies).lower(),
+        "app_required": str(app).lower(),
+        "tooling_required": str(tooling).lower(),
     }
+    needs["changes"]["outputs"] = plan
     needs.update(
         {
-            name: {"result": "skipped" if docs else "success"}
-            for name in check_ci_results.SOURCE
-        }
-    )
-    needs.update(
-        {
-            name: {"result": "success" if docs else "skipped"}
-            for name in check_ci_results.DOCS
-        }
-    )
-    needs.update(
-        {
-            name: {"result": "success" if required else "skipped"}
-            for name in check_ci_results.ENGINE
+            name: {"result": "success" if plan[flag] == "true" else "skipped"}
+            for name, flag in check_ci_results.CONDITIONAL.items()
         }
     )
     return needs
@@ -46,20 +37,25 @@ def check(needs):
 
 
 class CiResultsTests(unittest.TestCase):
-    def test_required_engine_success_and_explicitly_planned_skip_pass(self):
-        check(needs_data(True))
-        check(needs_data(False))
-        check(needs_data(False, docs=True))
+    def test_docs_tooling_app_dependency_and_engine_plans_pass(self):
+        for args in (
+            (False, False),
+            (False, False, False, True),
+            (False, False, True, True),
+            (False, True),
+            (True, True),
+        ):
+            check(needs_data(*args))
 
     def test_failure_cancellation_and_unplanned_skips_never_pass(self):
-        for required, docs in ((True, False), (False, False), (False, True)):
-            expected = needs_data(required, docs)
+        for engine, dependencies in ((True, True), (False, True), (False, False)):
+            expected = needs_data(engine, dependencies)
             for job in expected:
                 for status in ("success", "failure", "cancelled", "skipped", "neutral"):
                     if status == expected[job]["result"]:
                         continue
                     with (
-                        self.subTest(required=required, job=job, status=status),
+                        self.subTest(job=job, status=status),
                         self.assertRaises(SystemExit),
                     ):
                         needs = copy.deepcopy(expected)
@@ -67,28 +63,32 @@ class CiResultsTests(unittest.TestCase):
                         check(needs)
 
     def test_missing_unexpected_and_invalid_plan_data_fail(self):
-        for name in needs_data(False):
-            needs = needs_data(False)
+        for name in needs_data(False, False):
+            needs = needs_data(False, False)
             del needs[name]
             with self.subTest(missing=name), self.assertRaises(SystemExit):
                 check(needs)
-        needs = needs_data(False)
+        needs = needs_data(False, False)
         needs["extra"] = {"result": "success"}
         with self.assertRaises(SystemExit):
             check(needs)
-        for value in ("", "False", None, False):
-            needs = needs_data(False)
-            needs["changes"]["outputs"]["engine_required"] = value
-            with self.subTest(value=value), self.assertRaises(SystemExit):
-                check(needs)
-        needs = needs_data(False)
+        for flag in check_ci_results.OUTPUTS:
+            for value in ("", "False", None, False):
+                needs = needs_data(False, False)
+                needs["changes"]["outputs"][flag] = value
+                with (
+                    self.subTest(flag=flag, value=value),
+                    self.assertRaises(SystemExit),
+                ):
+                    check(needs)
+        needs = needs_data(False, False)
         needs["changes"]["outputs"] = {}
-        with self.assertRaises(KeyError):
+        with self.assertRaises(SystemExit):
             check(needs)
 
-    def test_conflicting_readme_and_engine_plans_fail(self):
+    def test_engine_plan_cannot_skip_dependency_checks(self):
         with self.assertRaises(SystemExit):
-            check(needs_data(True, docs=True))
+            check(needs_data(True, False))
 
 
 if __name__ == "__main__":

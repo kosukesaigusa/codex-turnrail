@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Full verification or a verified README-only change
+        description: Select checks from changed inputs or explicitly run everything
         type: choice
-        options: [full, readme]
-        default: full
+        options: [auto, full]
+        default: auto
   push:
     branches: [main]
 
@@ -26,13 +26,15 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       engine_required: ${{ steps.changes.outputs.engine_required }}
-      readme_only: ${{ steps.changes.outputs.readme_only }}
+      app_required: ${{ steps.changes.outputs.app_required }}
+      tooling_required: ${{ steps.changes.outputs.tooling_required }}
+      dependencies_required: ${{ steps.changes.outputs.dependencies_required }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Compare committed Engine inputs
+      - name: Identify affected checks from committed changes
         id: changes
         run: |
           python3 scripts/ci_changes.py > "$RUNNER_TEMP/ci-changes"
@@ -41,46 +43,27 @@ jobs:
           cat "$RUNNER_TEMP/ci-changes" >> "$GITHUB_STEP_SUMMARY"
 
   checks:
-    name: Source and app checks
+    name: Source checks
     needs: changes
-    if: ${{ needs.changes.outputs.readme_only == 'false' }}
     uses: ./.github/workflows/source-checks.yml
+    with:
+      app: ${{ needs.changes.outputs.app_required == 'true' }}
+      tooling: ${{ needs.changes.outputs.tooling_required == 'true' }}
+      engine: ${{ needs.changes.outputs.engine_required == 'true' }}
 
   dependencies:
     name: Dependency policy
     needs: changes
-    if: ${{ needs.changes.outputs.readme_only == 'false' }}
+    if: ${{ needs.changes.outputs.dependencies_required == 'true' }}
     uses: ./.github/workflows/dependency-policy.yml
 
   spelling:
     name: Spelling
-    needs: changes
-    if: ${{ needs.changes.outputs.readme_only == 'false' }}
     uses: ./.github/workflows/spelling.yml
 
   blob-size:
     name: File size policy
-    needs: changes
-    if: ${{ needs.changes.outputs.readme_only == 'false' }}
     uses: ./.github/workflows/blob-size.yml
-
-  readme:
-    name: README checks
-    needs: changes
-    if: ${{ needs.changes.outputs.readme_only == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: 22
-      - name: Check README formatting and Markdown
-        run: |
-          npx --yes prettier@3.5.3 --check README.md --config engine/.prettierrc.toml
-          npx --yes markdownlint-cli2@0.23.2 --config .markdownlint-cli2.jsonc README.md
 
   engine-inputs:
     name: Engine inputs
@@ -109,7 +92,6 @@ jobs:
         dependencies,
         spelling,
         blob-size,
-        readme,
         engine-inputs,
         engine,
       ]

@@ -7,9 +7,9 @@ import subprocess
 import sys
 
 from engine_artifacts import git, revision
+from github_api import github
 from project_metadata import ROOT, version_tuple
 from release_tag import require_ci
-from upstream_watch import github
 
 
 def version_at(root, commit):
