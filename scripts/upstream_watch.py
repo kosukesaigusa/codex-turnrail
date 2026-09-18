@@ -10,6 +10,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from github_api import github
 from project_metadata import (
     ROOT,
     VERSION,
@@ -22,20 +23,6 @@ APPCAST_URL = "https://persistent.oaistatic.com/codex-app-prod/appcast.xml"
 SPARKLE = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
 ISSUE_TITLE = "Codex upstream updates"
 ISSUE_MARKER = "<!-- turnrail-upstream-watch -->"
-
-
-def github(endpoint, *, method="GET", payload=None):
-    command = ["gh", "api", "--method", method, endpoint]
-    if payload is not None:
-        command.extend(["--input", "-"])
-    result = subprocess.run(
-        command,
-        input=None if payload is None else json.dumps(payload),
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    return json.loads(result.stdout) if result.stdout.strip() else None
 
 
 def download_app_file(url, destination, *, max_bytes, timeout):

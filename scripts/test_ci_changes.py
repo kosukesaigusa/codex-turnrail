@@ -1,4 +1,4 @@
-"""Check Engine selection against real committed source changes."""
+"""Check change-impact plans against real commits and Engine identities."""
 
 import json
 import subprocess
@@ -21,10 +21,13 @@ class CiChangesTests(unittest.TestCase):
         self.git("config", "user.email", "ci@example.invalid")
         for scope in artifacts.SCOPES:
             path = (
-                scope + "/fixture" if scope in {"engine", "scripts", "tests"} else scope
+                scope + "/fixture"
+                if scope in {"engine", "tests/integration"}
+                else scope
             )
             self.write(path, "initial\n")
         self.base = self.commit()
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
 
     def git(self, *args):
         return artifacts.git(self.root, *args)
@@ -39,72 +42,139 @@ class CiChangesTests(unittest.TestCase):
         self.git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "fixture")
         return self.git("rev-parse", "HEAD")
 
-    def test_monitor_docs_app_and_version_changes_skip_engine_without_artifacts(self):
-        for path in (
-            ".github/workflows/upstream.yml",
-            ".github/release.yml",
-            "docs/releases.md",
-            "README.md",
-            "app/Sources/Settings.swift",
-            "packaging/Info.plist",
-            "upstream.toml",
-        ):
-            self.write(path, "changed\n")
+    def plan(self, paths, expected):
+        base = self.git("rev-parse", "HEAD")
+        for path in paths:
+            self.write(path, base + "\n")
         source = self.commit()
         for event_name, event in (
-            ("pull_request", {"pull_request": {"base": {"sha": self.base}}}),
-            ("push", {"before": self.base}),
+            ("pull_request", {"pull_request": {"base": {"sha": base}}}),
+            ("push", {"before": base}),
         ):
-            with self.subTest(event=event_name):
-                required, _ = ci_changes.classify(self.root, event_name, event, source)
-                self.assertFalse(required)
+            plan, _ = ci_changes.classify(self.root, event_name, event, source)
+            self.assertEqual(
+                {name for name, required in plan.items() if required}, expected
+            )
+        return base, source
+
+    def test_docs_images_and_root_markdown_only_need_static_checks(self):
+        self.plan(
+            (
+                "README.md",
+                "docs/releases.md",
+                "docs/images/switch.png",
+                "CONTRIBUTING.md",
+            ),
+            set(),
+        )
+
+    def test_monitor_release_automation_and_ci_control_only_need_tooling_tests(self):
+        base, source = self.plan(
+            (
+                ".github/workflows/upstream.yml",
+                ".github/workflows/ci.yml",
+                ".github/workflows/release-readme.yml",
+                ".github/workflows/release-prepare.yml",
+                ".github/release.yml",
+                "scripts/prepare_release.py",
+                "scripts/upstream_watch.py",
+                "scripts/ci_changes.py",
+                "scripts/test_ci_changes.py",
+            ),
+            {"tooling"},
+        )
         self.assertEqual(
-            artifacts.source_inputs(self.root, self.base),
+            artifacts.source_inputs(self.root, base),
             artifacts.source_inputs(self.root, source),
         )
 
-    def test_build_test_workflow_and_embedded_markdown_changes_require_engine(self):
-        base = self.base
+    def test_app_sources_resources_and_compatibility_metadata_skip_engine(self):
+        self.plan(
+            ("app/Sources/Settings.swift", "packaging/Info.plist", "upstream.toml"),
+            {"tooling", "app"},
+        )
+        self.plan(
+            ("packaging/resources/AppIcon.icns", "scripts/build-app.sh"),
+            {"tooling", "app"},
+        )
+
+    def test_engine_and_build_contract_changes_require_engine_checks(self):
         for path in (
             "engine/codex-rs/core/prompt.md",
             "engine/codex-rs/Cargo.lock",
             "scripts/engine_artifacts.py",
+            "scripts/build-runtime.py",
+            "scripts/runtime_evidence.py",
+            "scripts/github_api.py",
             "tests/integration/verify_runtime.py",
-            "justfile",
-            ".github/workflows/ci.yml",
             ".github/workflows/engine-checks.yml",
             ".github/workflows/engine-release.yml",
-            ".github/workflows/release.yml",
         ):
-            self.write(path, "changed\n")
-            source = self.commit()
             with self.subTest(path=path):
-                required, _ = ci_changes.classify(
-                    self.root, "push", {"before": base}, source
+                base, source = self.plan((path,), {"tooling", "engine", "dependencies"})
+                self.assertNotEqual(
+                    artifacts.source_inputs(self.root, base),
+                    artifacts.source_inputs(self.root, source),
                 )
-                self.assertTrue(required)
-            base = source
 
-    def test_deletion_or_rename_out_of_engine_scope_still_requires_engine(self):
-        path = self.root / "engine/fixture"
+    def test_shared_build_helper_combines_app_and_engine_requirements(self):
+        self.plan(("scripts/dev.py",), set(ci_changes.FLAGS))
+
+    def test_dependency_workflow_change_does_not_recompile_engine(self):
+        self.plan(
+            (".github/workflows/dependency-policy.yml",), {"tooling", "dependencies"}
+        )
+
+    def test_mixed_documentation_and_code_changes_keep_all_affected_checks(self):
+        self.plan(
+            (
+                "docs/releases.md",
+                "app/Sources/App.swift",
+                "engine/codex-rs/core/prompt.md",
+            ),
+            set(ci_changes.FLAGS),
+        )
+
+    def test_rename_or_deletion_cannot_hide_original_engine_impact(self):
         self.write("engine/remaining", "keep scope\n")
         base = self.commit()
-        path.rename(self.root / "README.md")
+        (self.root / "engine/fixture").rename(self.root / "README.md")
         source = self.commit()
-        required, _ = ci_changes.classify(self.root, "push", {"before": base}, source)
-        self.assertTrue(required)
+        plan, _ = ci_changes.classify(self.root, "push", {"before": base}, source)
+        self.assertTrue(plan["engine"])
+        self.assertIn(
+            "engine/fixture", ci_changes.changed_paths(self.root, base, source)
+        )
 
-    def test_manual_ci_verifies_engine_even_without_source_changes(self):
-        required, _ = ci_changes.classify(self.root, "workflow_dispatch", {}, self.base)
-        self.assertTrue(required)
+    def test_automatic_dispatch_uses_branch_diff_and_cannot_force_a_skip(self):
+        self.write("docs/releases.md", "changed\n")
+        source = self.commit()
+        event = {"inputs": {"scope": "auto"}}
+        plan, _ = ci_changes.classify(self.root, "workflow_dispatch", event, source)
+        self.assertFalse(any(plan.values()))
+        self.write("engine/fixture", "changed\n")
+        source = self.commit()
+        plan, _ = ci_changes.classify(self.root, "workflow_dispatch", event, source)
+        self.assertTrue(plan["engine"])
+        self.git("update-ref", "refs/remotes/origin/main", source)
+        plan, _ = ci_changes.classify(self.root, "workflow_dispatch", event, source)
+        self.assertTrue(plan["engine"])
 
-    def test_missing_or_invalid_comparison_data_cannot_skip_engine(self):
+    def test_explicit_full_dispatch_runs_every_check_even_without_changes(self):
+        plan, _ = ci_changes.classify(
+            self.root, "workflow_dispatch", {"inputs": {"scope": "full"}}, self.base
+        )
+        self.assertTrue(all(plan.values()))
+
+    def test_missing_unknown_empty_and_invalid_comparisons_fail(self):
         for event_name, event in (
             ("schedule", {}),
             ("pull_request", {}),
             ("push", {"before": "0" * 40}),
             ("push", {"before": "missing"}),
             ("push", {"before": "f" * 40}),
+            ("push", {"before": self.base}),
+            ("workflow_dispatch", {"inputs": {"scope": "readme"}}),
         ):
             with (
                 self.subTest(event=event),
@@ -113,6 +183,22 @@ class CiChangesTests(unittest.TestCase):
                 ),
             ):
                 ci_changes.classify(self.root, event_name, event, self.base)
+        for path in (
+            "new-product/main.swift",
+            "scripts/new-build-helper.py",
+            ".github/workflows/new-build.yml",
+        ):
+            with (
+                self.subTest(path=path),
+                self.assertRaisesRegex(ValueError, "No CI impact rule"),
+            ):
+                ci_changes.impacts(path)
+
+    def test_every_tracked_product_file_has_an_explicit_impact_category(self):
+        paths = artifacts.git(artifacts.ROOT, "ls-files", "-z").split("\0")
+        for path in filter(None, paths):
+            with self.subTest(path=path):
+                ci_changes.impacts(path)
 
     def test_local_and_remote_nested_git_objects_match_without_recursive_tree_limit(
         self,
@@ -131,7 +217,7 @@ class CiChangesTests(unittest.TestCase):
         with patch.object(artifacts, "github", side_effect=github) as api:
             remote = artifacts.remote_inputs("fixture/repo", self.base)
         self.assertEqual(remote, artifacts.source_inputs(self.root, self.base))
-        self.assertEqual(api.call_count, 3)
+        self.assertLess(api.call_count, len(artifacts.SCOPES))
 
     def test_truncated_or_missing_remote_tree_data_cannot_authorize_reuse(self):
         for response in (

@@ -54,7 +54,8 @@ jobs:
           import json, os, sys
           from pathlib import Path
           sys.path.insert(0, "scripts")
-          from upstream_watch import app_candidate, github
+          from github_api import github
+          from upstream_watch import app_candidate
           data = json.loads((Path(os.environ["RUNNER_TEMP"]) / "upstream.json").read_text())
           available = app_candidate(data)
           if available:

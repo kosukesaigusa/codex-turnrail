@@ -18,23 +18,25 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from project_metadata import ROOT
-from release import RUNTIME_BINARIES, sha256, verify_report
-from upstream_watch import github
+from github_api import github
+from runtime_evidence import RUNTIME_BINARIES, sha256, verify_report
 
+ROOT = Path(__file__).resolve().parents[1]
+# Only files used to build or verify the reusable Engine belong in this identity.
 SCOPES = (
     "engine",
-    "scripts",
-    "tests",
-    "justfile",
-    ".github/workflows/ci.yml",
-    ".github/workflows/source-checks.yml",
-    ".github/workflows/dependency-policy.yml",
+    "scripts/build-runtime.py",
+    "scripts/dev.py",
+    "scripts/engine_artifacts.py",
+    "scripts/github_api.py",
+    "scripts/runtime_evidence.py",
+    "scripts/release_cache.py",
+    "scripts/measure_release.py",
+    "tests/integration",
     ".github/workflows/engine-inputs.yml",
     ".github/workflows/engine.yml",
     ".github/workflows/engine-checks.yml",
     ".github/workflows/engine-release.yml",
-    ".github/workflows/release.yml",
 )
 KINDS = {
     "checks": {"ci-runtime.json", "junit.xml"},

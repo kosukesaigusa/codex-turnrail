@@ -3,6 +3,12 @@ name: "[🔍CI] Checks"
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Select checks from changed inputs or explicitly run everything
+        type: choice
+        options: [auto, full]
+        default: auto
   push:
     branches: [main]
 
@@ -16,16 +22,19 @@ concurrency:
 
 jobs:
   changes:
-    name: Classify Engine changes
+    name: Classify CI changes
     runs-on: ubuntu-24.04
     outputs:
       engine_required: ${{ steps.changes.outputs.engine_required }}
+      app_required: ${{ steps.changes.outputs.app_required }}
+      tooling_required: ${{ steps.changes.outputs.tooling_required }}
+      dependencies_required: ${{ steps.changes.outputs.dependencies_required }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Compare committed Engine inputs
+      - name: Identify affected checks from committed changes
         id: changes
         run: |
           python3 scripts/ci_changes.py > "$RUNNER_TEMP/ci-changes"
@@ -34,11 +43,18 @@ jobs:
           cat "$RUNNER_TEMP/ci-changes" >> "$GITHUB_STEP_SUMMARY"
 
   checks:
-    name: Source and app checks
+    name: Source checks
+    needs: changes
     uses: ./.github/workflows/source-checks.yml
+    with:
+      app: ${{ needs.changes.outputs.app_required == 'true' }}
+      tooling: ${{ needs.changes.outputs.tooling_required == 'true' }}
+      engine: ${{ needs.changes.outputs.engine_required == 'true' }}
 
   dependencies:
     name: Dependency policy
+    needs: changes
+    if: ${{ needs.changes.outputs.dependencies_required == 'true' }}
     uses: ./.github/workflows/dependency-policy.yml
 
   spelling:

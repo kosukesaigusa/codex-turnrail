@@ -1,0 +1,39 @@
+name: "[🚀CD] Prepare release after CI"
+
+on:
+  workflow_run:
+    workflows: ["[🔍CI] Checks"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turnrail-release-preparation
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      # Execute only trusted main code, never a PR checkout or its artifacts.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag the verified version increase and start its Draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          python3 scripts/prepare_release.py --repository "$GITHUB_REPOSITORY" --run-id "$CI_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"

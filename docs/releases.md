@@ -21,7 +21,11 @@ The version command increments the build number and rejects malformed, equal, or
 
 ## Draft release workflow
 
-After merging a verified revision into `main`, run:
+Merge a PR that increases the product version. When that exact revision's main push CI succeeds, `[🚀CD] Prepare release after CI` automatically creates its immutable version tag and starts `[🚀CD] Draft release` from `main`. The release stays a draft until a maintainer completes the manual checks and publishes it.
+
+The preparation workflow runs trusted main code and verifies the originating workflow, repository, branch, commit ancestry, and latest exact-revision CI result. It compares the product version with the commit's first parent. Documentation changes and other commits without a version increase do not create a release. A newer version already on main supersedes an older candidate; a repeated completion event cannot recreate or move an existing tag.
+
+For a version merged before automation was enabled, or an explicitly initiated release, the manual command remains available:
 
 ```sh
 just release-tag --dry-run
@@ -30,7 +34,7 @@ just release-tag
 
 Tagging requires a clean `main` worktree that matches the remote and a successful latest `main` CI run for that exact commit. The tag must match the product version. Existing tags are rejected.
 
-The command pushes the immutable tag and dispatches `.github/workflows/release.yml` from `main`, with that tag as its explicit input. The workflow rejects other branch refs, then verifies the tag, source ancestry, metadata, and CI before checking out the tagged commit and using the protected `release` environment. It then:
+Both entry points dispatch `.github/workflows/release.yml` from `main`, with an existing tag as its explicit input. The workflow rejects other branch refs, then verifies the tag, source ancestry, metadata, and CI before checking out the tagged commit and using the protected `release` environment. It then:
 
 1. Downloads the matching official CLI release and verifies its source commit, archive SHA-256, size, and executable version.
 2. Resolves a verified optimized Engine artifact with matching source, tooling, and runner inputs. If none remains, it explicitly builds and verifies a new Engine using the parallel CI pipeline. It then builds the Swift app from the tagged source.
@@ -48,9 +52,22 @@ An existing tag whose workflow failed before creating a release can be retried w
 
 ## Verified Engine reuse
 
-CI first compares committed Engine inputs: the PR base against its tested merge commit, or the previous main commit against the pushed commit. If these inputs are unchanged, it skips both Engine identification and the Engine pipeline without looking for an artifact or allocating an Engine runner. Missing comparison data fails CI. Manual CI dispatch explicitly requests Engine verification.
+CI selects checks by affected inputs, not by a special README rule. It compares the PR base with its tested merge commit, or the previous main commit with the pushed commit. All changes receive formatting, Markdown, workflow, spelling, and file-size checks. Additional checks are combined when a change affects multiple areas:
 
-The input scopes cover `engine/`, `scripts/`, `tests/`, the root `justfile`, and the CI, source-check, dependency-policy, Engine, and release producer workflows listed in `scripts/engine_artifacts.py`. They include lockfiles, V8 pins, build commands, test selection, runtime probes, and the artifact verifier. The upstream monitor, release-note configuration, root documentation, product version, Swift app, and official-app metadata are outside these scopes. Markdown inside `engine/` remains an Engine input because prompts can be compiled into binaries. Each revision still runs source, Swift app, dependency-policy, spelling, and file-size checks. The final CI gate accepts skipped Engine jobs only when successful change detection explicitly selected that plan; all other required checks must succeed.
+| Changed inputs                                                            | Additional validation                                                                                  |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Product documentation, screenshots, and root Markdown                     | None; static checks only                                                                               |
+| Monitoring, release automation, release notes, and CI selection           | Product Python tooling tests                                                                           |
+| Swift source/tests, app resources, versions, or compatibility metadata    | Swift formatting, app build/tests, and tooling tests                                                   |
+| Rust dependency policy workflow                                           | Dependency checks and tooling tests                                                                    |
+| Engine source, build commands, runtime verification, or evidence contract | Engine formatting/source policies, dependency checks, tooling tests, and both Engine verification jobs |
+| Shared development build helper                                           | Both app and Engine checks                                                                             |
+
+`scripts/ci_changes.py` defines these impact rules. Renames include both the old and new paths, and deletions keep their original impact. Unknown paths or missing comparison data fail with an explicit error; classify new build helpers and workflows before adding them. In particular, a new helper used by the Engine must also be included in its input scopes.
+
+Manual CI dispatch defaults to `scope: auto` and uses the same rules. A branch is compared with its merge base on main; a dispatch on the current main commit compares its first parent. `scope: full` explicitly requests every check. Automated upstream and README PRs use this same selection; their branch names or author identities do not grant an exemption. The required CI gate rejects failed checks and any skip not authorized by the computed plan.
+
+The Engine input scopes in `scripts/engine_artifacts.py` cover `engine/`, the actual runtime build and measurement helpers, shared GitHub/evidence helpers, runtime integration probes, and Engine producer workflows. They do not include the whole `scripts/` directory, general CI orchestration, release automation, or app/documentation inputs. The same scopes determine both Engine CI selection and the reusable artifact identity. Markdown inside `engine/` remains an Engine input because prompts can be compiled into binaries.
 
 When Engine verification is required, its SHA-256 artifact key combines these Git objects with the target, two build profiles, actual Rust compiler, Xcode, SDK, Clang, macOS build, and hosted runner image. External compiler overrides are rejected. Changes to any of these inputs require a matching verified artifact or a new Engine build. The same input scopes govern release artifact reuse, so a monitor-only change does not invalidate an otherwise matching Engine.
 
@@ -136,9 +153,17 @@ Before publishing a draft:
 - Verify Gatekeeper behavior and launch on a Mac without development tools.
 - Verify official UI turns, Shell, JavaScript, approvals, account setup, reauthentication, next-turn account switching, and folder rules.
 - Record these results and any limitations in the release notes.
-- Update the README's app download link to the verified release's exact asset URL when publishing. The versioned filename requires a link update for each release.
+- After publishing, review and merge the automatically created README download-link PR.
 
 Publish the same downloaded and verified artifacts using GitHub's release editor. Do not rebuild or replace them after testing. Users install and update manually from GitHub Releases. An updater, a separate distribution site, and Windows support are outside the current scope.
+
+### Published-release README update
+
+`[📝Docs] Update release download` responds to `release.published`. It checks that the release is the latest published stable release and has the expected uploaded app ZIP, size, and GitHub SHA-256 metadata. It creates a `docs/release-vX.Y.Z` branch changing only the existing README download URL and opens a PR. Older releases cannot downgrade the link; drafts and prereleases cannot become download targets. Existing PRs and human edits are preserved.
+
+The workflow explicitly dispatches `ci.yml` with `scope: auto` for its branch, so validation does not wait for the bot-created PR event to be approved. GitHub can still show an approval banner for the separate `pull_request` run; both runs use the same impact rules. A download-link change needs only static checks; additional code changes automatically receive their corresponding tests. The PR remains for a maintainer to merge.
+
+Use the workflow's manual `tag` input on `main` to process a release whose tag predates this workflow, a release published before it existed, or to retry a failed update. Inspect an orphaned branch after a push succeeded without a PR. Publication performed with the repository's `GITHUB_TOKEN` does not trigger another workflow; if a future publication tool uses that token, it must explicitly dispatch this workflow. Normal publication through GitHub's release editor triggers it automatically for tags containing the workflow.
 
 ### Verification records
 
@@ -160,7 +185,7 @@ The existing three-way merge script prepares the Engine update. App metadata and
 
 The automation explicitly dispatches `ci.yml` for the candidate branch after creating its PR. This allows validation with the repository's `GITHUB_TOKEN`; no additional GitHub App or personal token is required. GitHub may also display an approval request for the automatic `pull_request` run. Both triggers share a branch concurrency group and the verified Engine result, so approving the second run does not require another successful build for identical inputs. Review the candidate's dispatched CI run and exact commit before merging.
 
-Enable **Allow GitHub Actions to create and approve pull requests** in repository Actions settings. Default token permissions remain read-only; write permissions are scoped to the jobs that maintain the tracking issue or prepare an update PR. No automation merges an upstream PR or publishes a binary release.
+Enable **Allow GitHub Actions to create and approve pull requests** in repository Actions settings. Default token permissions remain read-only; write permissions are scoped to jobs that maintain the tracking issue, prepare PRs, create release tags, or dispatch validation/release workflows. No automation merges a PR or publishes a binary release.
 
 After CI passes, review the launch contract and complete Codex UI verification in ChatGPT. A change to the supported ChatGPT app or Codex CLI version needs a Turnrail minor version and build-number increment before release. V8 or zsh changes also require reviewing their pinned component notices under `packaging/licenses/`.
 

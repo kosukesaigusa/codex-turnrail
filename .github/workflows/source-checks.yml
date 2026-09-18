@@ -1,7 +1,17 @@
-name: "[♻️Reusable] Check source and app"
+name: "[♻️Reusable] Check affected sources"
 
 on:
   workflow_call:
+    inputs:
+      tooling:
+        type: boolean
+        required: true
+      app:
+        type: boolean
+        required: true
+      engine:
+        type: boolean
+        required: true
 
 permissions:
   contents: read
@@ -22,6 +32,7 @@ jobs:
           python-version: "3.12"
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        if: ${{ inputs.engine }}
         with:
           toolchain: "1.95.0"
           components: rustfmt
@@ -42,6 +53,7 @@ jobs:
           echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
 
       - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+        if: ${{ inputs.engine }}
 
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -59,8 +71,16 @@ jobs:
       - name: Install formatting dependencies
         run: pnpm --dir engine install --frozen-lockfile
 
-      - name: Check all source formatting
-        run: just fmt-check
+      - name: Check tooling and documentation formatting
+        run: python3 scripts/format.py --scope tooling --check
+
+      - name: Check Swift formatting
+        if: ${{ inputs.app }}
+        run: python3 scripts/format.py --scope app --check
+
+      - name: Check Engine formatting
+        if: ${{ inputs.engine }}
+        run: python3 scripts/format.py --scope engine --check
 
       - name: Check GitHub Actions workflows
         run: just lint-workflows
@@ -69,6 +89,7 @@ jobs:
         run: just lint-docs
 
       - name: Verify Engine source policies
+        if: ${{ inputs.engine }}
         run: |
           python3 engine/.github/scripts/verify_cargo_workspace_manifests.py
           python3 engine/.github/scripts/verify_tui_core_boundary.py
@@ -77,21 +98,25 @@ jobs:
           python3 engine/scripts/readme_toc.py engine/README.md
 
       - name: Test product tooling
+        if: ${{ inputs.tooling }}
         run: |
           just metadata-check
           just test-tools
 
       - name: Build the app
+        if: ${{ inputs.app }}
         run: |
           swift --version
           xcodebuild -version
           swift build --package-path app -c release --jobs 2
 
       - name: Test the app
+        if: ${{ inputs.app }}
         timeout-minutes: 5
         run: swift test --package-path app --jobs 2 --verbose
 
       - name: Check packaging scripts and metadata
+        if: ${{ inputs.tooling || inputs.app }}
         run: |
           zsh -n scripts/build-app.sh
           zsh -n scripts/verify-protocol-compatibility.sh

@@ -5,8 +5,8 @@ import argparse
 import subprocess
 import sys
 
+from github_api import github
 from project_metadata import ROOT, validate
-from upstream_watch import github
 
 
 def git(*args):
