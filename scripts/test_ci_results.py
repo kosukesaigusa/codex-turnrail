@@ -10,9 +10,24 @@ from unittest.mock import patch
 import check_ci_results
 
 
-def needs_data(required):
+def needs_data(required, docs=False):
     needs = {name: {"result": "success"} for name in check_ci_results.REQUIRED}
-    needs["changes"]["outputs"] = {"engine_required": str(required).lower()}
+    needs["changes"]["outputs"] = {
+        "engine_required": str(required).lower(),
+        "readme_only": str(docs).lower(),
+    }
+    needs.update(
+        {
+            name: {"result": "skipped" if docs else "success"}
+            for name in check_ci_results.SOURCE
+        }
+    )
+    needs.update(
+        {
+            name: {"result": "success" if docs else "skipped"}
+            for name in check_ci_results.DOCS
+        }
+    )
     needs.update(
         {
             name: {"result": "success" if required else "skipped"}
@@ -34,10 +49,11 @@ class CiResultsTests(unittest.TestCase):
     def test_required_engine_success_and_explicitly_planned_skip_pass(self):
         check(needs_data(True))
         check(needs_data(False))
+        check(needs_data(False, docs=True))
 
     def test_failure_cancellation_and_unplanned_skips_never_pass(self):
-        for required in (True, False):
-            expected = needs_data(required)
+        for required, docs in ((True, False), (False, False), (False, True)):
+            expected = needs_data(required, docs)
             for job in expected:
                 for status in ("success", "failure", "cancelled", "skipped", "neutral"):
                     if status == expected[job]["result"]:
@@ -51,7 +67,7 @@ class CiResultsTests(unittest.TestCase):
                         check(needs)
 
     def test_missing_unexpected_and_invalid_plan_data_fail(self):
-        for name in check_ci_results.REQUIRED | check_ci_results.ENGINE:
+        for name in needs_data(False):
             needs = needs_data(False)
             del needs[name]
             with self.subTest(missing=name), self.assertRaises(SystemExit):
@@ -69,6 +85,10 @@ class CiResultsTests(unittest.TestCase):
         needs["changes"]["outputs"] = {}
         with self.assertRaises(KeyError):
             check(needs)
+
+    def test_conflicting_readme_and_engine_plans_fail(self):
+        with self.assertRaises(SystemExit):
+            check(needs_data(True, docs=True))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,53 @@
+name: "[📝Docs] Update release download"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable release to link in README
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turnrail-release-readme
+  cancel-in-progress: false
+
+jobs:
+  readme:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Configure the automation identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          gh auth setup-git
+      - name: Prepare the README pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$GITHUB_REF" == refs/heads/main ]]
+            tag="$INPUT_TAG"
+          else
+            tag="$RELEASE_TAG"
+          fi
+          python3 scripts/update_release_readme.py --repository "$GITHUB_REPOSITORY" --tag "$tag" | tee -a "$GITHUB_STEP_SUMMARY"

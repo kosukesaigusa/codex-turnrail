@@ -98,6 +98,45 @@ class CiChangesTests(unittest.TestCase):
         required, _ = ci_changes.classify(self.root, "workflow_dispatch", {}, self.base)
         self.assertTrue(required)
 
+    def test_readme_only_changes_select_docs_for_pr_push_and_explicit_dispatch(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        self.write("README.md", "Download the release.\n")
+        source = self.commit()
+        for event_name, event in (
+            ("pull_request", {"pull_request": {"base": {"sha": self.base}}}),
+            ("push", {"before": self.base}),
+            ("workflow_dispatch", {"inputs": {"scope": "readme"}}),
+        ):
+            with self.subTest(event=event_name):
+                self.assertTrue(
+                    ci_changes.readme_only(self.root, event_name, event, source)
+                )
+        self.assertFalse(
+            ci_changes.readme_only(
+                self.root, "workflow_dispatch", {"inputs": {"scope": "full"}}, source
+            )
+        )
+
+    def test_readme_dispatch_rejects_empty_diff_and_hidden_source_changes(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        event = {"inputs": {"scope": "readme"}}
+        with self.assertRaisesRegex(ValueError, "README.md-only"):
+            ci_changes.readme_only(self.root, "workflow_dispatch", event, self.base)
+        self.write("README.md", "Download the release.\n")
+        self.write("engine/fixture", "changed\n")
+        source = self.commit()
+        with self.assertRaisesRegex(ValueError, "README.md-only"):
+            ci_changes.readme_only(self.root, "workflow_dispatch", event, source)
+        self.assertFalse(
+            ci_changes.readme_only(self.root, "push", {"before": self.base}, source)
+        )
+
+    def test_unknown_manual_ci_scope_cannot_skip_checks(self):
+        with self.assertRaises(ValueError):
+            ci_changes.readme_only(
+                self.root, "workflow_dispatch", {"inputs": {"scope": "none"}}, self.base
+            )
+
     def test_missing_or_invalid_comparison_data_cannot_skip_engine(self):
         for event_name, event in (
             ("schedule", {}),
