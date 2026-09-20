@@ -182,6 +182,29 @@ def update(root, tag):
     if patch:
         git(root, "apply", "--check", "--binary", input_bytes=patch)
         git(root, "apply", "--binary", input_bytes=patch)
+    workspace = root / "engine/codex-rs"
+    if not (workspace / "Cargo.lock").is_file():
+        raise UpstreamError("The merged Engine must contain its Cargo.lock lockfile.")
+    try:
+        # Refresh workspace versions without unlocking existing external dependencies.
+        subprocess.run(["cargo", "update", "--workspace"], cwd=workspace, check=True)
+        subprocess.run(
+            [
+                "cargo",
+                "metadata",
+                "--locked",
+                "--all-features",
+                "--format-version",
+                "1",
+            ],
+            cwd=workspace,
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise UpstreamError(
+            "Engine lockfile refresh or validation failed; inspect the pending update."
+        ) from error
     return incoming
 
 
