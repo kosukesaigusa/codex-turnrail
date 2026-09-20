@@ -127,6 +127,8 @@ Replace `rust-vX.Y.Z` with the intended Codex release tag. The command fetches t
 
 A clean merge is applied as uncommitted working-tree changes. The command does not stage files, create a branch commit, push, or publish. It creates temporary Git objects for merge computation. If there are conflicts, it reports the affected paths and leaves source files unchanged; resolve the overlapping Engine changes deliberately before preparing the update again. Dirty worktrees, invalid provenance, and malformed release tags fail explicitly.
 
+After the merge, Cargo updates workspace package versions in `Cargo.lock` while retaining existing external dependency pins, then validates the resolved graph with `cargo metadata --locked`. A missing lockfile or a resolution failure stops preparation before a candidate PR can be published; the uncommitted update remains available for inspection. The automatic candidate workflow uses this same path. CI checks dependencies with `--locked` so it reports stale lockfiles without rewriting them.
+
 After an update, review the Engine diff and dependency locks, update the supported app metadata, run `just metadata-write`, run the affected checks, then rebuild and verify the complete package. Protocol equality alone does not prove official UI compatibility. Record the selected official app version and observed UI behavior in [Verification](verification.md). [Releases](releases.md) describes automatic candidate detection and Draft PR preparation.
 
 ## Continuous integration

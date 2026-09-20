@@ -18,6 +18,7 @@ jobs:
         with:
           rust-version: 1.95.0
           manifest-path: ./engine/codex-rs/Cargo.toml
+          arguments: --all-features --locked
       - name: Check for a clean worktree
         if: ${{ always() && !cancelled() }}
         uses: ./engine/.github/actions/check-clean-worktree

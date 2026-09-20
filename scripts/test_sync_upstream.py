@@ -28,6 +28,18 @@ class UpstreamTests(unittest.TestCase):
         (self.upstream / "runtime.txt").write_text("header\n\nbody\n\nfooter\n")
         (self.upstream / "old.txt").write_text("remove in next release\n")
         (self.upstream / "binary.dat").write_bytes(b"old\x00binary\n")
+        workspace = self.upstream / "codex-rs"
+        (workspace / "cli/src").mkdir(parents=True)
+        (workspace / "Cargo.toml").write_text(
+            '[workspace]\nmembers = ["cli"]\nresolver = "2"\n'
+            '[workspace.package]\nversion = "1.0.0"\n'
+        )
+        (workspace / "cli/Cargo.toml").write_text(
+            '[package]\nname = "codex-fixture"\nversion.workspace = true\n'
+            'edition = "2021"\n'
+        )
+        (workspace / "cli/src/lib.rs").write_text("pub fn fixture() {}\n")
+        self.cargo(workspace, "generate-lockfile", "--offline")
         self.commit(self.upstream)
         self.git(self.upstream, "tag", "rust-v1.0.0")
         self.base = self.git(self.upstream, "rev-parse", "HEAD")
@@ -35,7 +47,10 @@ class UpstreamTests(unittest.TestCase):
         engine.mkdir()
         for path in self.upstream.iterdir():
             if path.name != ".git":
-                shutil.copy2(path, engine / path.name)
+                if path.is_dir():
+                    shutil.copytree(path, engine / path.name)
+                else:
+                    shutil.copy2(path, engine / path.name)
         (engine / "runtime.txt").write_text("product header\n\nbody\n\nfooter\n")
         (engine / "custom.txt").write_text("account routing\n")
         (self.product / "README.md").write_text("# Product\n")
@@ -72,6 +87,16 @@ class UpstreamTests(unittest.TestCase):
     def commit(self, root):
         self.git(root, "add", "--all")
         self.git(root, "commit", "--message", "Fixture revision")
+
+    def cargo(self, workspace, *arguments):
+        return subprocess.run(
+            ["cargo", *arguments],
+            cwd=workspace,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
 
     def publish_update(self, text):
         (self.upstream / "runtime.txt").write_text(text)
@@ -136,6 +161,38 @@ class UpstreamTests(unittest.TestCase):
             (self.product / "engine/runtime.txt").read_text(),
             "product header\n\nbody\n\nfooter\n",
         )
+
+    def test_version_only_upstream_update_refreshes_the_workspace_lock(self):
+        manifest = self.upstream / "codex-rs/Cargo.toml"
+        manifest.write_text(manifest.read_text().replace('"1.0.0"', '"2.0.0"'))
+        self.publish_update("header\n\nbody\n\nnew footer\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.cargo(self.upstream / "codex-rs", "metadata", "--locked", "--offline")
+
+        sync_upstream.update(self.product, "rust-v2.0.0")
+
+        workspace = self.product / "engine/codex-rs"
+        lock = workspace / "Cargo.lock"
+        self.assertEqual(
+            tomllib.loads(lock.read_text())["package"],
+            [{"name": "codex-fixture", "version": "2.0.0"}],
+        )
+        before = lock.read_bytes()
+        self.cargo(workspace, "metadata", "--locked", "--offline")
+        self.assertEqual(lock.read_bytes(), before)
+        self.assertEqual(self.git(self.product, "diff", "--cached"), "")
+
+    def test_invalid_merged_manifest_stops_upstream_preparation(self):
+        manifest = self.upstream / "codex-rs/cli/Cargo.toml"
+        manifest.write_text(
+            manifest.read_text() + '[dependencies]\nmissing = { path = "../missing" }\n'
+        )
+        self.publish_update("header\n\nbody\n\nnew footer\n")
+
+        with self.assertRaisesRegex(sync_upstream.UpstreamError, "lockfile"):
+            sync_upstream.update(self.product, "rust-v2.0.0")
+
+        self.assertEqual(self.git(self.product, "diff", "--cached"), "")
 
     def test_prerelease_update_preserves_routing_and_exact_provenance(self):
         incoming = self.publish_update("header\n\nbody\n\nnew footer\n")
