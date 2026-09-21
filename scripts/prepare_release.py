@@ -25,12 +25,12 @@ def select_tag(root, repository, run_id):
         run["repository"]["full_name"] != repository
         or run["head_repository"]["full_name"] != repository
         or run["path"] != ".github/workflows/ci.yml"
-        or run["event"] != "push"
+        or run["event"] not in {"push", "workflow_dispatch"}
         or run["head_branch"] != "main"
         or run["status"] != "completed"
         or run["conclusion"] != "success"
     ):
-        raise ValueError("Automatic releases require successful main push CI.")
+        raise ValueError("Automatic releases require successful main CI.")
     commit = revision(run["head_sha"])
     git(root, "merge-base", "--is-ancestor", commit, "origin/main")
     before = version_at(root, f"{commit}^1")

@@ -112,7 +112,9 @@ def prepare(root, repository, tag):
                 "## Test plan\n\n"
                 "- [x] Confirm the latest stable release and its uploaded app asset.\n"
                 "- [ ] README formatting and Markdown checks.\n\n"
-                "CI selects checks from the actual changed files."
+                "CI selects checks from the actual changed files. This PR merges "
+                "automatically after CI if only the verified download URL changed. "
+                "Convert it to a draft to pause automatic merging."
             ),
         },
     )
