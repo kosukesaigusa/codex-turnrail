@@ -106,6 +106,12 @@ class PrepareReleaseTests(unittest.TestCase):
             ],
         )
 
+    def test_bot_merge_followed_by_dispatched_main_ci_starts_a_draft(self):
+        self.run["event"] = "workflow_dispatch"
+        self.prepare()
+        self.assertEqual(self.calls[0][1]["sha"], self.source)
+        self.assertEqual(self.calls[1][1]["inputs"], {"tag": "v0.6.0"})
+
     def test_duplicate_completion_does_not_dispatch_or_move_tag_again(self):
         self.prepare()
         self.calls.clear()
@@ -140,7 +146,6 @@ class PrepareReleaseTests(unittest.TestCase):
             ("conclusion", "failure"),
             ("status", "in_progress"),
             ("event", "pull_request"),
-            ("event", "workflow_dispatch"),
             ("head_branch", "feature"),
             ("path", ".github/workflows/other.yml"),
             ("head_repository", {"full_name": "fork/product"}),

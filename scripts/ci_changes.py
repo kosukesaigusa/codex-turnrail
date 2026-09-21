@@ -22,6 +22,8 @@ APP_INPUTS = (
 )
 LINT_FILES = {".codespellrc", ".gitignore", ".markdownlint-cli2.jsonc"}
 TOOLING_FILES = {
+    "scripts/merge_automation_pr.py",
+    ".github/workflows/automation-merge.yml",
     "scripts/check_ci_results.py",
     "scripts/ci_changes.py",
     "scripts/format.py",

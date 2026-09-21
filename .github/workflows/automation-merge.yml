@@ -1,0 +1,54 @@
+name: "[🔧Util] Merge verified automation PRs"
+
+on:
+  workflow_run:
+    workflows: ['\[🔍CI\] Checks']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful automated CI run to inspect or resume
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turnrail-automation-merge-${{ github.event.workflow_run.head_branch || inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'workflow_dispatch' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch != 'main' &&
+       github.event.workflow_run.actor.login == 'github-actions[bot]' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      # Never execute PR code or download PR artifacts with this write token.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Merge an unchanged automated candidate after CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$GITHUB_REF" == refs/heads/main ]]
+            run="$INPUT_RUN_ID"
+          else
+            run="$CI_RUN_ID"
+          fi
+          python3 scripts/merge_automation_pr.py --repository "$GITHUB_REPOSITORY" --run-id "$run" | tee -a "$GITHUB_STEP_SUMMARY"

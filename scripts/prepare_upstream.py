@@ -15,11 +15,15 @@ from github_api import github
 from project_metadata import (
     GENERATED,
     ROOT,
+    VERSION_GENERATED,
     codex_version,
     metadata_bytes,
+    product_version,
     read_upstream,
     supported_swift,
+    version_tuple,
 )
+from release import bump
 from sync_upstream import UpstreamError, update
 from upstream_watch import app_candidate, download_app_file, source_release
 
@@ -89,6 +93,10 @@ def inspect_app(candidate, directory):
 
 
 def prepare(root, candidate, tag):
+    current, _ = product_version(root)
+    major, minor, _ = version_tuple(current)
+    if major != 0:
+        raise ValueError("Automatic upstream versioning requires the 0.x policy.")
     source_release(tag)
     commit = update(root, tag)
     metadata = read_upstream(root)
@@ -99,6 +107,7 @@ def prepare(root, candidate, tag):
     }
     (root / "upstream.toml").write_bytes(metadata_bytes(metadata))
     (root / GENERATED).write_text(supported_swift(metadata))
+    bump(root, f"0.{minor + 1}.0")
     return commit
 
 
@@ -118,7 +127,17 @@ def publish(repository, branch, candidate, tag, commit):
         )
     subprocess.run(["git", "switch", "-c", branch], check=True)
     subprocess.run(
-        ["git", "add", "--", "engine", "upstream.toml", str(GENERATED)], check=True
+        [
+            "git",
+            "add",
+            "--",
+            "engine",
+            "upstream.toml",
+            str(GENERATED),
+            "packaging/Info.plist",
+            str(VERSION_GENERATED),
+        ],
+        check=True,
     )
     subprocess.run(
         [
@@ -139,9 +158,10 @@ def publish(repository, branch, candidate, tag, commit):
         "The Engine changes were prepared with a three-way upstream merge.\n\n"
         "## Test plan\n\n"
         "- [ ] Product CI passes for this commit.\n"
-        "- [ ] Review the upstream changes, dependencies, and launch contract.\n"
-        "- [ ] Verify Codex UI turns in ChatGPT, approvals, and account switching.\n"
-        "- [ ] Increment the Turnrail minor version and build number before release.\n"
+        "- [x] Increment the Turnrail minor version and build number.\n\n"
+        "This PR merges automatically after verified CI. Main CI then creates a "
+        "Draft Release. Before publishing that draft, verify Codex UI turns, "
+        "approvals, and account switching in ChatGPT.\n"
     )
     pr = github(
         f"repos/{repository}/pulls",
@@ -150,7 +170,7 @@ def publish(repository, branch, candidate, tag, commit):
             "title": f"chore: support ChatGPT {candidate['version']}",
             "head": branch,
             "base": "main",
-            "draft": True,
+            "draft": False,
             "body": body,
         },
     )
@@ -159,7 +179,7 @@ def publish(repository, branch, candidate, tag, commit):
     github(
         f"repos/{repository}/actions/workflows/ci.yml/dispatches",
         method="POST",
-        payload={"ref": branch},
+        payload={"ref": branch, "inputs": {"scope": "auto"}},
     )
 
 

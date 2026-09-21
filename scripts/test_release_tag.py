@@ -12,6 +12,68 @@ from unittest.mock import patch
 import release_tag
 
 
+class MainCITests(unittest.TestCase):
+    def test_explicit_main_ci_after_a_bot_merge_satisfies_the_release_gate(self):
+        with patch.object(
+            release_tag,
+            "github",
+            return_value={
+                "workflow_runs": [
+                    {
+                        "event": "workflow_dispatch",
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            },
+        ):
+            release_tag.require_ci("fixture/product", "a" * 40)
+
+    def test_latest_failed_or_pending_main_run_cannot_use_older_success(self):
+        for status, conclusion in (("completed", "failure"), ("in_progress", None)):
+            with (
+                patch.object(
+                    release_tag,
+                    "github",
+                    return_value={
+                        "workflow_runs": [
+                            {
+                                "event": "workflow_dispatch",
+                                "status": status,
+                                "conclusion": conclusion,
+                            },
+                            {
+                                "event": "push",
+                                "status": "completed",
+                                "conclusion": "success",
+                            },
+                        ]
+                    },
+                ),
+                self.assertRaises(ValueError),
+            ):
+                release_tag.require_ci("fixture/product", "a" * 40)
+
+    def test_pr_ci_is_not_evidence_for_a_main_release(self):
+        with (
+            patch.object(
+                release_tag,
+                "github",
+                return_value={
+                    "workflow_runs": [
+                        {
+                            "event": "pull_request",
+                            "status": "completed",
+                            "conclusion": "success",
+                        }
+                    ]
+                },
+            ),
+            self.assertRaises(ValueError),
+        ):
+            release_tag.require_ci("fixture/product", "a" * 40)
+
+
 class ReleaseTagTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()

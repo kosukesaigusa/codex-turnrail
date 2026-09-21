@@ -278,7 +278,13 @@ class ReleaseTests(unittest.TestCase):
                 patch(
                     "release_tag.github",
                     return_value={
-                        "workflow_runs": [{"status": status, "conclusion": conclusion}]
+                        "workflow_runs": [
+                            {
+                                "event": "push",
+                                "status": status,
+                                "conclusion": conclusion,
+                            }
+                        ]
                     },
                 ),
                 self.assertRaises(ValueError),
@@ -287,7 +293,9 @@ class ReleaseTests(unittest.TestCase):
         with patch(
             "release_tag.github",
             return_value={
-                "workflow_runs": [{"status": "completed", "conclusion": "success"}]
+                "workflow_runs": [
+                    {"event": "push", "status": "completed", "conclusion": "success"}
+                ]
             },
         ):
             require_ci("owner/repo", "a" * 40)

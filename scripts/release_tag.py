@@ -15,8 +15,9 @@ def git(*args):
 
 def require_ci(repository, commit):
     runs = github(
-        f"repos/{repository}/actions/workflows/ci.yml/runs?head_sha={commit}&branch=main&event=push&per_page=1"
+        f"repos/{repository}/actions/workflows/ci.yml/runs?head_sha={commit}&branch=main&per_page=100"
     )["workflow_runs"]
+    runs = [run for run in runs if run["event"] in {"push", "workflow_dispatch"}]
     if (
         not runs
         or runs[0]["status"] != "completed"
