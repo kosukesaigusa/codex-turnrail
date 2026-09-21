@@ -12,7 +12,7 @@ This is an independent project with no affiliation with or endorsement from Open
 
 Requires an Apple silicon Mac running macOS 14 or later and the [supported ChatGPT macOS app](upstream.toml) installed at `/Applications/ChatGPT.app`. The ChatGPT app version and build must match exactly.
 
-1. [Download Codex Turnrail for macOS (Apple silicon)](https://github.com/kosukesaigusa/codex-turnrail/releases/download/v0.6.0/Codex-Turnrail-v0.6.0-macos-arm64.zip).
+1. [Download Codex Turnrail for macOS (Apple silicon)](https://github.com/kosukesaigusa/codex-turnrail/releases/download/v0.7.0/Codex-Turnrail-v0.7.0-macos-arm64.zip).
 2. Double-click the ZIP, then drag `Codex Turnrail.app` into **Applications**.
 3. Quit ChatGPT if it is running, open **Codex Turnrail**, and select **Check Compatibility**.
 
