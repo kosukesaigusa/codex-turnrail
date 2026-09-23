@@ -1,112 +1,77 @@
 # Architecture
 
-## Product contract
+## Runtime boundary
 
-Codex Turnrail combines a macOS menu bar app in `app/` with a dedicated Codex Engine in `engine/`. The companion launches the unmodified official ChatGPT macOS app (`ChatGPT.app`) in Turnrail mode for Codex tasks. Normal launches retain official behavior. Closing Settings does not stop an Engine already serving ChatGPT.
+Codex Turnrail combines a Swift menu bar app with a local account router. **Open Codex** starts the supported official ChatGPT app with `CODEX_CLI_PATH` pointing to `CodexTurnrailRouter`. The router verifies the official installation and starts its unmodified `Contents/Resources/codex` executable. Code Mode uses the official Host in the same installation. Turnrail does not replace, copy, or re-sign official binaries.
 
-Folder rules define both permitted accounts and their priority. Changes apply to the next top-level turn in every conversation matching that rule. Active turns, child agents, reviews, and compaction retain the authentication already bound to their task.
+The router relays the app-server stdio protocol and adds process-local routing configuration. Normal ChatGPT launches use the official configuration. Closing Turnrail Settings does not stop the router or the Engine already serving ChatGPT. The router owns its Engine process group; shutdown targets only that group and its local connections.
 
-## Directory routing
+ChatGPT also supplies a CLI path to its per-task MCP helpers and writes a separate configuration for its bundled Computer Use plugin. The router changes only `CODEX_CLI_PATH` values pointing to its own executable to the verified official Engine path. It prepares per-task overrides on creation, resume, and fork, and synchronizes the current app version's generated plugin configuration before Engine startup and task or MCP loading. The generated file must be an owned regular file inside the current Codex home. Other CLI paths, permission settings, enabled surfaces, and policy values are preserved; policy checks remain enforced. Browser and native Computer Use helpers can then read configuration and policy through their own official app-server process.
 
-The registry uses `state.json` schema version `3`. Both `routing.defaultAccountIDs` and `routing.directoryRules` are required. Each directory rule contains an `id`, an absolute `directory`, and ordered `accountIDs`. The same array expresses permission and priority; there is no separate global selection. Registering an account does not expand its permissions.
+The exact app version, build, and bundled CLI version must match `upstream.toml`. The app, Engine, and Host must pass strict OpenAI signature verification before execution. The launch environment and request metadata remain version-specific integration points, so using the official Engine does not remove compatibility validation.
 
-Settings stores resolved directory paths. The Engine resolves the execution directory and selects the deepest matching rule by path component. For a linked Git worktree, the existing Git trust resolver verifies ownership before mapping the relative directory to the original checkout. If ownership cannot be established, routing uses the actual worktree directory.
+The native Computer Use service can also inherit the desktop's router path directly. When the calling process has the official OpenAI signature and `com.openai.sky.CUAService` identity, the router replaces that helper process with the verified official Engine before opening any account registry or routing ledger. Arguments, stdio, the original home, and policy environment are preserved. The helper does not create a second account router or receive additional Computer Use permissions.
 
-Execution-directory precedence follows the normal turn contract: `turn/start` cwd, local-environment cwd, then saved thread settings. No organization, profile, email, or plan receives special routing. Missing settings, invalid account IDs, and duplicate rules produce explicit errors. The runtime accepts schema 3 only.
+## Directory and turn selection
 
-## Task runtime and history
+The account registry uses `state.json` schema version `3`. Both `routing.defaultAccountIDs` and `routing.directoryRules` are required. Each rule contains an ID, an absolute directory, and ordered account IDs. The same list defines permission and priority; registering an account does not expand its assignments.
 
-One Engine process owns one canonical task store. Each loaded task runtime is bound to an `AuthManager` when it is created.
+The `UserPromptSubmit` hook supplies the official Engine's effective working directory and task/turn IDs. The router resolves the path and selects the deepest rule by path component. Linked Git worktrees are mapped to their original checkout only after ownership, metadata, and the back-reference are verified. Invalid worktree metadata is an error. Empty matching rules reject the turn instead of selecting another rule.
 
-Before a new top-level turn, the Engine compares the selected account with the task's current account. If they differ, the task must be idle. The Engine then reconstructs its runtime with the same thread ID and history and the selected `AuthManager`. Persisted tasks retain saved history; ephemeral tasks retain their in-memory history and context. The new turn is submitted after reconstruction.
+Selection checks only assigned accounts in order. Missing login, permanent authentication failure, or exhausted general quota can advance to the next assigned account. Transport failures, malformed quota, workspace-policy mismatches, and identity mismatches stop selection. A spending cap alone does not exclude an account while general usage is allowed.
 
-A `thread/revert` reload retains the authentication bound to that task. Forks and child agents inherit their parent's authentication, including when residency reloads evict an idle parent. Different tasks can execute concurrently under different accounts without switching an active task's credentials.
+The selected account is bound durably to the task and turn before inference. Changing priority affects the next turn. Active turns never change accounts automatically. Child-agent and guardian requests must identify a known parent turn and inherit its binding. Compaction uses the current binding, or the task's last completed binding for an explicit idle compaction.
 
-## Model discovery
+## Model traffic and conversation recovery
 
-The official `model/list` input has pagination and hidden-model options but no folder or thread ID. `TurnrailCoordinator` therefore collects accounts assigned to any rule and fetches their remote catalogs with their own authentication.
+The router listens only on `127.0.0.1`, with a random endpoint secret and private endpoint metadata. It accepts bounded JSON WebSocket requests from the official Engine. Browser-origin requests, ambiguous HTTP headers, unknown routing metadata, account-specific routing hints, and inference without a binding are rejected. Prewarm requests may only use `generate=false` and receive a local empty completion.
 
-The returned list contains shared models and the common reasoning efforts, input formats, and service tiers. One visible model is marked as the default. Unassigned accounts are not queried. Assignment changes affect the next request. Each request fetches the remote catalogs; failures become RPC errors.
+Upstream requests use TLS to the verified ChatGPT backend and the selected account's access token and workspace ID. The router preserves the Engine's tool, model, and response protocol. Shell execution, approval, Code Mode, and browser-tool execution remain in the official runtime.
 
-Before an idle turn starts, the Engine resolves the requested model from the normal model or collaboration-mode input and saved settings. It verifies availability in the selected account's current catalog before stopping the idle runtime. An invalid request does not reach inference or history, and the original runtime remains available for a corrected request.
+Native `web.run` uses HTTP `POST /alpha/search` under the configured provider. The router requires the thread and turn from its metadata to have an existing model-request binding, including for child agents whose search metadata omits the parent turn. The selected account supplies authentication; only the protocol's originator, version, and turn metadata headers are forwarded. Request and response sizes are bounded, redirects are rejected, and a submitted search is not replayed or moved to another account.
 
-The official app's model picker remains global and refreshes when that app requests the list. The Engine independently rechecks availability before each new idle turn.
+The private ledger stores turn bindings and completed response history. Message bodies are content-addressed; response records retain input deltas and the previous response relationship. When the account or upstream connection changes, the router reconstructs known conversation input and removes `previous_response_id`. It never assumes an unknown response ID belongs to the selected account. Corrupt or cross-task history is an error.
 
-## Account status
+Before transmitting a model request, the router requires a WebSocket pong within ten seconds. If a reused connection fails this check, it establishes and checks one replacement for the same bound account before sending. A new connection generation reconstructs the known conversation input. Failure of the replacement check stops the turn without inference. One bounded receive remains pending between responses so that Foundation continues processing pong and close frames.
 
-Settings owns the lifetime of periodic refresh tasks. Quota and identity refresh approximately every 60 seconds, plus activation, wake, and manual refresh. Full-account refreshes do not overlap. Existing values remain visible during a request; a confirmed failure replaces them with an error.
+A request is recorded before upstream transmission. Completion and history are committed before acknowledging completion to the Engine. A connection failure during transmission or an uncertain result blocks that turn; submitted requests are not automatically replayed and are not moved to another account. A new user turn is required after such a failure. Unsupported background inference purposes are rejected rather than sent using an unspecified account.
 
-Each asynchronous account operation has an identifier. Starting reauthentication or removal invalidates older identity and quota results. Accounts being authenticated or removed are excluded from automatic refresh.
+Terminal service diagnostics distinguish request rejection, failed responses, and incomplete responses. Only recognized protocol error codes, reason identifiers, and valid HTTP error status are displayed and retained by the desktop's normal task log. Transport diagnostics include the check/send/receive phase, allowlisted numeric OS error codes, and valid WebSocket close codes. Free-form server messages, unknown identifiers, response content, URLs, and credential headers are not forwarded. Missing or unrecognized reasons are stated explicitly; failures remain terminal without automatic replay.
 
-The Engine records a known account's `TurnStarted` event in `<root>/accounts/<account-id>/last-used.json`, with schema 1, the account ID, and Unix seconds. File locking and atomic replacement prevent concurrent turns from replacing a newer timestamp with an older one. Authentication and quota checks do not update this timestamp.
+## Automatic titles and hooks
 
-An independent task reads this metadata every 5 seconds and displays local time in **Last used**. Missing history displays `-`; read failures expose diagnostic details. Removing an account deletes its account directory and usage timestamp.
+The official app creates title tasks with ordinary prompt hooks disabled. The stdio observer recognizes `thread/start` and `thread/fork` with source `thread_title`, then registers the returned task ID and working directory before forwarding the response to ChatGPT. Title inference requires that registration and matching title metadata.
 
-## Failure behavior
+Turnrail supplies `UserPromptSubmit`, `PreCompact`, and `Stop` hooks through command-line configuration. It asks the official Engine for their exact trust hashes and trusts only those commands. Other user and project hooks retain their own definitions and trust status. Turnrail does not modify the normal `config.toml` or `hooks.json`. Task overrides and configuration writes that would bypass routing are rejected.
 
-- Account selection stays within the matching rule. An empty rule rejects the request; it does not select another rule.
-- Only missing login, permanent authentication-refresh failure, and exhausted general Codex quota permit advancing to the next assigned account before a turn.
-- General Codex quota is unavailable when `rate_limit.allowed` is false, `rate_limit.limit_reached` is true, or either usage window is fully consumed. A reached spending cap alone does not exclude an account whose general quota is available.
-- Quota transport failures, missing general quota buckets, invalid percentages, and registered-email mismatches fail immediately.
-- Model lookup failures, invalid catalogs, and models unavailable to the selected account are explicit errors. They do not advance account priority.
-- An expired authentication label requires the specific `token_expired` error. Other failures are not guessed to be expiration. Reauthentication is an explicit user action.
-- Turns are not automatically replayed after starting, executing a tool, or reaching an uncertain side-effect boundary.
-- Failure to write **Last used** produces a thread warning without repeating the turn.
+## Authentication and models
 
-## Authentication and storage
+Each account has an authentication home under `~/Library/Application Support/Codex Turnrail/accounts/<account-id>/auth-home`. The official CLI's Keychain entry key derives from the canonical home path. Tokens are not written to the routing registry or history ledger.
 
-Each account is added through a fresh ChatGPT browser login. The companion validates email and plan through the dedicated Engine's `account/read`; neither is entered manually.
+Account login and account-status reads use the signed official Engine. Reauthentication signs in to a temporary home, validates the registered email and token workspace, then commits credentials to the original Keychain entry. A mismatched login preserves the previous credentials. Routine router inspection starts the official Engine in the account's existing authentication home under the same account lock as Settings operations. Its `getAuthStatus` response supplies the access token over a private protocol pipe; `account/read` supplies identity and workspace policy. Turnrail validates email, token expiry, workspace identity, and backend policy before routing. A near-expiry token is refreshed once by the official Engine and must retain the workspace identity. The router keeps only the returned access token in memory. It does not copy, clear, or rewrite Keychain entries during inspection, and it never changes access permissions.
 
-Reauthentication passes the registered email to the Engine. Credentials are replaced only if the OAuth callback's ID token contains the matching email. A mismatch, missing email, or invalid token fails while preserving the previous credentials. Before quota checks and task creation, the Engine also compares stored authentication with the registry email.
+Startup obtains a model catalog from assigned, signed-in accounts and advertises their common models, reasoning levels, modalities, and service tiers. Incompatible tool protocols are excluded. The catalog is supplied to the official Engine through process-local configuration. Restart ChatGPT through Turnrail after changing account assignments to rebuild this global catalog. Account inspection is cached for up to 60 seconds; each routed request checks its model and selected options against the selected account's catalog.
 
-The canonical task store uses the normal `~/.codex`. Each account has a separate authentication home under `~/Library/Application Support/Codex Turnrail/accounts/<account-id>/auth-home`. Keychain entry keys derive from the authentication-home path, keeping credentials separate from other accounts and task history.
+## Data ownership
 
-Credential storage explicitly uses `Keyring`. Keychain failures fail login instead of writing credential files. The registry stores internal IDs, verified identities, and routing rules. It does not store tokens or quota responses.
+ChatGPT's own sign-in remains unchanged. The router selects authentication for model requests; it does not switch the app's connected Apps, uploads, or other account services. A server-side file ID created under the app's account may be inaccessible to a model request under another account, even in a new task. Local files and image content already present in model input follow the selected request account.
 
-Conversation history is shared across accounts in the canonical task store. Switching an idle task to another account carries its existing context into the next inference request under that account's authentication. This includes earlier messages and tool results retained in the context.
+The normal `~/.codex` history is shared. The router additionally retains private request history under `<Turnrail root>/router`, with owner-only permissions. Folder rules control permitted request accounts, not history partitioning or redaction. Only assign accounts authorized to receive the same code and conversation context. Removing an account removes its credentials and assignments, but not shared task or routing history.
 
-Folder rules control which account may execute the next turn. They do not partition or redact conversation history. Assign only accounts authorized to receive the folder's code and conversation context, and keep work folders restricted to accounts approved for that work.
+## Settings and usage
 
-Quota comes from the account-specific `account/rateLimits/read` response. When `rateLimitsByLimitId` is present, the UI selects the general `codex` bucket and excludes model-specific buckets. Otherwise, it displays the required `rateLimits` snapshot from the same response, as defined by the upstream protocol. Invalid `usedPercent` values are rejected rather than clamped.
+**Switch** compares usage and changes priority. **Folders** edits assignments. **Accounts** manages sign-in and removal. Both account lists share **Account**, **Usage**, and **Last used** columns. Positive saved-reset counts open details; zero adds no row or spacing. Authentication and account actions remain in **Accounts**. The interface is English.
 
-The same response provides the optional `rateLimitResetCredits` summary. A missing summary means availability is unknown, not zero. Its `availableCount` is authoritative; `credits: null` means details were not obtained, and a shorter detail list can reflect the server's cap. The detail view reports unavailable or partial details explicitly. Available credits are ordered by expiration, with non-expiring credits last. A null expiry means no expiration; a missing or malformed expiry is an error. Backend titles are used when present; the protocol's `codexRateLimits` type is labeled **Full reset** when its optional title is absent. Unknown reset types are never labeled as full resets. Reset credits are display-only; Turnrail does not consume them.
+Settings refreshes identity and quota approximately every 60 seconds, on activation and wake, and on manual request. Full-account refreshes do not overlap. Operation IDs invalidate stale results after reauthentication or removal. Errors replace previous values explicitly.
 
-Account removal first logs out its credentials. Only after logout succeeds does it remove the registry entry, authentication home, timestamp, and assignments. Other accounts retain their order. Shared conversation history in `~/.codex` remains.
+Quota comes from `account/rateLimits/read`. When the optional `rateLimitsByLimitId` map exists, the UI selects the general `codex` bucket; otherwise it uses the protocol's `rateLimits` snapshot. Invalid percentages are rejected. Optional reset-credit data distinguishes unknown availability, zero credits, unavailable details, partial details, and non-expiring credits. Credits are display-only.
 
-## Management UI
+The router records **Last used** when the prompt hook successfully binds an account, before inference starts. It stores a monotonic timestamp in that account's schema-1 `last-used.json`. Failed writes stop the hook. Settings reads these records every five seconds; absent history displays `-`.
 
-**Switch** compares quota and changes priority for a folder. **Folders** edits assignments. **Accounts** adds, reauthenticates, and removes global accounts. Launch status, **Open Codex**, and **Check Compatibility** sit below the sidebar. **Open Codex** launches ChatGPT with the dedicated Engine. A running ChatGPT app disables duplicate launch.
+## Distribution and verification
 
-Both account lists share **Account**, **Usage**, and **Last used** columns. Each usage window groups its name, next reset, remaining percentage, and a thin bar. A positive available-reset count opens the detail sheet; a zero count contributes no row or spacing. Individual credit expirations appear only in that sheet. Authentication status, reauthentication, and removal remain in **Accounts**. Five-hour and weekly windows remain separate within the shared usage column.
+The app bundle contains two signed Swift executables: `CodexTurnrailApp` and `CodexTurnrailRouter`. The official ChatGPT installation supplies its own Engine and Host and retains OpenAI's signatures and entitlements. No Rust runtime is built or included by the product release workflow.
 
-The interface is English. Normal screens show the quota, reset times, timestamps, and errors needed for decisions. Detailed errors expose the complete diagnostic JSON without persisting it. Internal paths and nonessential helper text are not shown.
+The local runtime fixture uses the real official Engine and Host, the router core linked into the test process, the packaged hook executable, synthetic credentials, and a local mock model. It checks Code Mode, account changes, titles, compaction, accepted and declined command approvals, uncertain delivery without replay, recovery on a new turn, native HTTP web search, and recovery from an expired idle connection. Foundation WebSocket tests additionally verify ping/pong after a completed response, idle disconnection detection, and no replay after transmission. Packaging records official binary hashes and the router hash, then signs, notarizes, and verifies the distribution. These checks are separate from running the complete packaged router with real accounts and validating the official UI.
 
-Initial launch and macOS reopen events invoke SwiftUI's `OpenSettingsAction` through the persistent menu-bar label, creating or focusing Settings regardless of the launcher.
-
-## Runtime package and compatibility
-
-The Engine and Code Mode Host are built together from the same pinned upstream source. Custom authentication and routing live in the Engine; the Host and V8 runtime retain their upstream implementation. The Host executes JavaScript and requests tools from the Engine. The Engine owns approval and actual Shell or MCP execution.
-
-The product builder verifies the upstream V8 library and Rust binding checksums selected by `Cargo.lock`, builds with `--locked`, and invokes the upstream package builder. The package includes verified zsh and rg distributions:
-
-```text
-Contents/Resources/engine/
-├── codex-package.json
-├── bin/
-│   ├── codex
-│   └── codex-code-mode-host
-├── codex-path/rg
-└── codex-resources/zsh/bin/zsh
-```
-
-The companion launches `engine/bin/codex`. Runtime discovery uses this manifest and layout. The official app supplies the UI and version reference; runtime binaries are built from this repository.
-
-Packaging compares stable and experimental app-server schemas with the official CLI. Launch checks the exact official app version, build, CLI version, and Engine version. A mismatch prevents Turnrail mode. `CODEX_CLI_PATH` and `CODEX_APP_SERVER_FORCE_CLI` are validated against the supported app version; their long-term availability is not treated as a stable public extension contract.
-
-## Signing
-
-Development packages use an explicit Apple Development identity. The Engine, Host, rg, zsh, and app bundle are signed. The Host receives `allow-jit` and `allow-unsigned-executable-memory` entitlements for V8.
-
-The finished app is checked with strict signature verification and a local mock-model probe covering JavaScript, parallel tools, packaged binaries, and approval decisions. Its report is saved next to the app. Build artifacts are cleaned after verification. Installation must preserve any runtime path still used by a running official app or Engine.
-
-See [Development](development.md) for build commands, [Releases](releases.md) for Developer ID distribution and notarization, and [Verification](verification.md) for observed evidence.
+See [Development](development.md), [Releases](releases.md), and [Verification](verification.md) for commands, delivery rules, and observed results.

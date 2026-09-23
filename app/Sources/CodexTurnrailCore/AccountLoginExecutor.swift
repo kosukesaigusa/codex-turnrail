@@ -39,6 +39,45 @@ private final class CancellableLoginProcess: @unchecked Sendable {
   private var errorData = Data()
 
   func run(_ command: AccountAuthenticationCommand) throws -> CommandResult {
+    if command.arguments.first == "logout" {
+      guard let destination = command.environment["CODEX_HOME"] else {
+        throw RouterFailure("Logout requires an explicit account home.")
+      }
+      let home = URL(filePath: destination)
+      return try AccountCredentialStore.withExclusiveAccess(to: home) {
+        try runProcess(command)
+      }
+    }
+    guard let expectedEmail = command.expectedEmail else { return try runProcess(command) }
+    guard let destination = command.environment["CODEX_HOME"] else {
+      throw RouterFailure("Reauthentication requires an explicit account home.")
+    }
+    let home = URL(filePath: destination)
+    let temporary = home.deletingLastPathComponent().appending(path: "signin-\(UUID().uuidString)")
+    try RouterJSON.privateDirectory(temporary)
+    let keychain = AccountCredentialStore()
+    var environment = command.environment
+    environment["CODEX_HOME"] = temporary.path
+    let isolated = AccountAuthenticationCommand(
+      executableURL: command.executableURL, arguments: command.arguments,
+      environment: environment, expectedEmail: nil)
+    let outcome = Result {
+      let result = try runProcess(isolated)
+      if result.exitCode == 0 {
+        try lock.withLock {
+          guard !cancelled else { throw CancellationError() }
+          try keychain.promote(from: temporary, to: home, expectedEmail: expectedEmail)
+        }
+      }
+      return result
+    }
+    // Cleanup failure is visible; never leave a second unnoticed credential store.
+    try keychain.remove(temporary)
+    try FileManager.default.removeItem(at: temporary)
+    return try outcome.get()
+  }
+
+  private func runProcess(_ command: AccountAuthenticationCommand) throws -> CommandResult {
     let output = Pipe()
     let error = Pipe()
     process.executableURL = command.executableURL

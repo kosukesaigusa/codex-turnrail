@@ -45,9 +45,13 @@ def codex_version_key(tag):
 
 def read_upstream(root):
     metadata = tomllib.loads((root / "upstream.toml").read_text())
+    return validate_upstream(metadata)
+
+
+def validate_upstream(metadata):
     fields = {
         "codex": {"repository", "tag", "commit"},
-        "app": {"bundle_identifier", "version", "build"},
+        "app": {"bundle_identifier", "version", "build", "cli_version"},
     }
     if set(metadata) != set(fields):
         raise ValueError("upstream.toml must contain exactly [codex] and [app].")
@@ -64,6 +68,7 @@ def read_upstream(root):
     if re.fullmatch(r"[0-9a-f]{40}", codex["commit"]) is None:
         raise ValueError("The Codex base must be a full Git commit SHA.")
     version_tuple(app["version"])
+    cli_version(metadata)
     if re.fullmatch(r"[1-9][0-9]*", app["build"]) is None:
         raise ValueError("The official app build must be a positive integer string.")
     return metadata
@@ -78,7 +83,16 @@ def metadata_bytes(metadata):
 
 
 def cli_version(metadata):
-    return "codex-cli " + codex_version(metadata["codex"]["tag"])
+    return validate_cli_version(metadata["app"]["cli_version"])
+
+
+def validate_cli_version(value):
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(f"codex-cli {CODEX_VERSION}", value) is None
+    ):
+        raise ValueError("The official app must pin an exact codex-cli SemVer version.")
+    return value
 
 
 def supported_swift(metadata):

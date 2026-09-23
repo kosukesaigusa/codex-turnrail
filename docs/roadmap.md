@@ -1,39 +1,25 @@
 # Roadmap
 
-Codex Turnrail is a macOS-only product distributed through signed and notarized release drafts. Product and upstream versions are recorded in `packaging/Info.plist` and `upstream.toml`. Current evidence and its limits are recorded in [Verification](verification.md).
+Codex Turnrail is a macOS-only product distributed through signed and notarized GitHub Release drafts. The settings app and router have one product version. The official ChatGPT app is installed separately and supplies its unmodified Engine and Code Mode Host.
 
-Initial releases will use GitHub Releases. Users download the app archive and install updates manually. Windows support, an automatic updater, and a dedicated distribution site are outside the current scope.
+## Official Engine integration
 
-## Remaining validation
+| Work                     | Completion criteria                                                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Swift runtime            | Routing, account isolation, title registration, history recovery, cancellation, and process ownership pass local tests.             |
+| Official runtime fixture | The pinned, signed Engine and Host pass Code Mode, switching, titles, and both approval decisions through the native router.        |
+| Account operations       | Real sign-in, credential refresh, matching-email reauthentication, removal, and quota-based selection behave as documented.         |
+| Desktop UI               | The packaged router supports ordinary turns, the in-app browser, automatic titles, and history-preserving account switching.        |
+| Distribution             | Hosted CI, Developer ID signing, notarization, uploaded-ZIP verification, and a clean installation pass for the candidate revision. |
 
-| Work                | Completion criteria                                                                                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Hosted CI           | Root product workflows complete successfully for the candidate revision. The required check rejects failed, skipped, and cancelled dependencies.                                                 |
-| Full Rust workspace | Classify and resolve the remaining failures, unify required environment conditions, and complete a successful full run. Retain the failed-run record separately from successful isolated reruns. |
-| Installed package   | Exit the official app and Engine, install the verified app, and confirm normal launch from the installation path. Preserve account data and conversation history.                                |
-| Official UI         | Launch through Turnrail and verify an ordinary turn, JavaScript, Shell, and approval acceptance and rejection with the packaged runtime.                                                         |
-| Account operations  | Verify history-preserving switching on the next turn, unchanged authentication during active turns, directory rules, login, reauthentication, rejection of a mismatched email, and removal.      |
+[Verification](verification.md) distinguishes completed checks, historical custom-Engine evidence, and remaining product validation. The Python feasibility prototype alone does not verify the Swift product integration.
 
-The zsh declined-status and parent-authentication reload fixes already pass their targeted tests. Remaining workspace failures and official UI validation have separate completion criteria.
+## Maintenance and distribution
 
-## Source publication
+- Keep exact official app/CLI metadata and signatures verified. Review hooks, metadata, model capabilities, and account-service behavior when the official app changes.
+- Preserve the source repository's Apache-2.0 license and upstream reference-source notices. The distributed app contains only Turnrail's Swift executables and resources.
+- Keep monitoring, candidate preparation, CI, merge, draft creation, and published-download updates automated. Publication follows real-device verification of the same app ZIP.
+- Retain explicit failure behavior for unbound requests, incompatible model catalogs, uncertain inference, and malformed private history.
+- Review private router-history retention as usage grows. Account removal does not remove shared conversation history.
 
-- Publish the app and product tooling under Apache-2.0; retain the Engine's license, NOTICE, modification notices, and component licenses.
-- Keep source, assets, Git history, upstream provenance, and exact supported versions reviewed before publication.
-
-## GitHub Releases
-
-- Configure the signing certificate in the GitHub `release` environment and validate the first hosted Draft Release build.
-- Review bundled component notices for the binary being distributed, including native dependency subcomponents.
-- Complete the manual release checklist, then publish the verified arm64 app archive. Keep detailed verification records in the release workflow artifact and a summary in the release notes.
-- Document the package's signing status and installation steps, and verify download, extraction, Gatekeeper behavior, first launch, account setup, and Codex integration in ChatGPT on a Mac without development tools.
-
-The official ChatGPT macOS app is installed separately. Compatibility must be revalidated per supported version; the external Codex Engine launch variables are not assumed to remain available indefinitely.
-
-The Draft Release workflow requires Developer ID Application signing. The workflow requires accepted notarization, a stapled ticket, and verified download integrity before a draft is ready to publish. Signing credentials are not required to publish the source repository.
-
-## Ongoing maintenance
-
-Keep upstream updates coordinated with the official CLI version, protocol schema, toolchain, V8 pair, and package behavior. Review automated dependency updates against that constraint rather than independently moving the Engine away from its selected base.
-
-Tag-driven Draft Releases and hourly upstream monitoring are defined in [Releases](releases.md). Official UI turns and real-account operations remain outside the current PR checks.
+Users install updates manually. An automatic updater, a distribution website, and Windows support remain outside the current scope. The launch environment and request metadata are checked per supported release rather than assumed to remain stable indefinitely.

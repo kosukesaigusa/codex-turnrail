@@ -16,9 +16,11 @@ let package = Package(
       name: "CodexTurnrailApp",
       targets: ["CodexTurnrailApp"]
     ),
+    .executable(name: "CodexTurnrailRouter", targets: ["CodexTurnrailRouter"]),
   ],
   targets: [
     .target(name: "CodexTurnrailCore"),
+    .executableTarget(name: "CodexTurnrailRouter", dependencies: ["CodexTurnrailCore"]),
     .executableTarget(
       name: "CodexTurnrailApp",
       dependencies: ["CodexTurnrailCore"]

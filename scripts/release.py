@@ -7,13 +7,10 @@ import os
 import plistlib
 import subprocess
 import sys
-import tarfile
-import tempfile
-import urllib.request
 from pathlib import Path
 
 import notarization
-from github_api import github
+from product_evidence import PRODUCT_BINARIES, verify_report
 from project_metadata import (
     ROOT,
     cli_version,
@@ -22,8 +19,7 @@ from project_metadata import (
     version_tuple,
     write_product_version,
 )
-from runtime_evidence import RUNTIME_BINARIES, sha256, verify_report
-from upstream_watch import source_release
+from runtime_evidence import sha256
 
 APP_NAME = "Codex Turnrail.app"
 
@@ -46,82 +42,17 @@ def bump(root, version):
     write_product_version(root)
 
 
-def check_cli(path, metadata):
-    actual = run(str(path), "--version")
-    expected = cli_version(metadata)
-    if actual != expected:
-        raise ValueError(f"Official CLI must report {expected}; received {actual}.")
-
-
-def download_cli(output, metadata):
-    if output.exists():
-        raise ValueError(f"Official CLI output already exists: {output}")
-    codex = metadata["codex"]
-    tag = codex["tag"]
-    ref = github(f"repos/openai/codex/git/ref/tags/{tag}")["object"]
-    if ref["type"] == "tag":
-        ref = github(f"repos/openai/codex/git/tags/{ref['sha']}")["object"]
-    if ref["type"] != "commit" or ref["sha"] != codex["commit"]:
-        raise ValueError(
-            "The official release tag no longer matches the pinned source commit."
-        )
-    release = source_release(tag)
-    name = "codex-aarch64-apple-darwin.tar.gz"
-    assets = [asset for asset in release["assets"] if asset["name"] == name]
-    if len(assets) != 1:
-        raise ValueError("The official CLI release must contain one arm64 archive.")
-    asset = assets[0]
-    digest = asset["digest"]
-    if not isinstance(digest, str) or not digest.startswith("sha256:"):
-        raise ValueError("GitHub did not provide the official CLI archive SHA-256.")
-    with tempfile.TemporaryDirectory(prefix="turnrail-official-cli-") as temporary:
-        archive = Path(temporary) / name
-        with urllib.request.urlopen(
-            asset["browser_download_url"], timeout=60
-        ) as source:
-            with archive.open("wb") as target:
-                while block := source.read(1024 * 1024):
-                    if target.tell() + len(block) > asset["size"]:
-                        raise ValueError(
-                            "The official CLI archive exceeds its declared size."
-                        )
-                    target.write(block)
-        if (
-            archive.stat().st_size != asset["size"]
-            or "sha256:" + sha256(archive) != digest
-        ):
-            raise ValueError(
-                "The official CLI archive failed size or checksum verification."
-            )
-        with tarfile.open(archive) as bundle:
-            members = bundle.getmembers()
-            if len(members) != 1 or not members[0].isfile():
-                raise ValueError(
-                    "The official CLI archive must contain exactly one file."
-                )
-            if members[0].name != "codex-aarch64-apple-darwin":
-                raise ValueError("Unexpected official CLI executable name.")
-            bundle.extractall(temporary, filter="data")
-        executable = Path(temporary) / members[0].name
-        check_cli(executable, metadata)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(executable.read_bytes())
-        output.chmod(0o755)
-
-
 def runtime_hashes(output):
-    resources = output / APP_NAME / "Contents/Resources/engine"
-    hashes = {name: sha256(resources / name) for name in RUNTIME_BINARIES}
-    hashes["CodexTurnrailApp"] = sha256(
-        output / APP_NAME / "Contents/MacOS/CodexTurnrailApp"
-    )
-    return hashes
+    directory = output / APP_NAME / "Contents/MacOS"
+    if (output / APP_NAME / "Contents/Resources/engine").exists():
+        raise ValueError("Turnrail must not distribute a replacement Engine.")
+    return {name: sha256(directory / name) for name in PRODUCT_BINARIES}
 
 
-def record(output, profile, engine_provenance):
+def record(output):
     metadata = validate(ROOT)
     report = output / "runtime-verification.json"
-    verify_report(report)
+    evidence = verify_report(report)
     signature = subprocess.run(
         ["codesign", "-dvv", str(output / APP_NAME)],
         capture_output=True,
@@ -140,66 +71,36 @@ def record(output, profile, engine_provenance):
         "source_commit": run("git", "-C", str(ROOT), "rev-parse", "HEAD"),
         "dirty": bool(run("git", "-C", str(ROOT), "status", "--porcelain")),
         "target": "aarch64-apple-darwin",
-        "profile": profile,
+        "profile": "release",
         "signing_authorities": authorities,
         "notarized": False,
-        "rustc": subprocess.check_output(
-            ["rustc", "--version"], cwd=ROOT / "engine/codex-rs", text=True
-        ).strip(),
         "swift": run("swift", "--version"),
         "binaries": runtime_hashes(output),
         "runtime_report_sha256": sha256(report),
     }
-    if engine_provenance is None:
-        manifest["engine"] = {
-            "origin": "source-build",
-            "source_commit": manifest["source_commit"],
-            "profile": profile,
-        }
-    else:
-        from engine_artifacts import expected_identity, read_manifest
-
-        evidence = read_manifest(
-            engine_provenance.parent, expected_identity(), "verified"
-        )
-        if profile != "release":
-            raise ValueError("Verified Engine artifacts require the release profile.")
-        manifest["engine"] = {"origin": "verified-artifact", "evidence": evidence}
+    manifest["engine"] = {
+        "origin": "installed-official",
+        "evidence": evidence["official_engine"],
+    }
+    if evidence["router_sha256"] != manifest["binaries"]["CodexTurnrailRouter"]:
+        raise ValueError("The verified router differs from the packaged executable.")
+    validate_engine_source(manifest)
     (output / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 def validate_engine_source(manifest):
-    from engine_artifacts import digest, identity, revision, source_inputs
-
     engine = manifest["engine"]
-    if engine["origin"] == "source-build":
-        if (
-            engine["source_commit"] != manifest["source_commit"]
-            or engine["profile"] != manifest["profile"]
-        ):
-            raise ValueError(
-                "The Engine build does not match the app source and profile."
-            )
-    elif engine["origin"] == "verified-artifact":
-        evidence = engine["evidence"]
-        expected = identity(
-            source_inputs(ROOT, manifest["source_commit"]),
-            evidence["identity"]["runner"],
+    if engine["origin"] != "installed-official":
+        raise ValueError("Turnrail requires an unmodified installed official Engine.")
+    evidence = engine["evidence"]
+    if (
+        evidence["app"] != manifest["upstream"]["app"]
+        or evidence["cli_version"] != cli_version(manifest["upstream"])
+        or evidence["signing_team"] != "2DC432GLL2"
+    ):
+        raise ValueError(
+            "Official Engine evidence does not match the supported contract."
         )
-        if (
-            manifest["profile"] != "release"
-            or evidence["schema_version"] != 1
-            or evidence["kind"] != "verified"
-            or evidence["identity"] != expected
-            or evidence["key"] != digest(expected)
-        ):
-            raise ValueError(
-                "The Engine evidence does not match the app's Engine inputs."
-            )
-        revision(evidence["source_commit"])
-        revision(evidence["workflow_commit"])
-    else:
-        raise ValueError("The app manifest has an unknown Engine origin.")
 
 
 def validate_distribution(output, tag):
@@ -223,7 +124,14 @@ def validate_distribution(output, tag):
     if manifest["binaries"] != runtime_hashes(output):
         raise ValueError("A packaged binary changed after runtime verification.")
     report = output / "runtime-verification.json"
-    verify_report(report)
+    evidence = verify_report(report)
+    if (
+        evidence["official_engine"] != manifest["engine"]["evidence"]
+        or evidence["router_sha256"] != manifest["binaries"]["CodexTurnrailRouter"]
+    ):
+        raise ValueError(
+            "Runtime evidence does not match the packaged router and official Engine."
+        )
     if sha256(report) != manifest["runtime_report_sha256"]:
         raise ValueError("The runtime verification report changed after the build.")
     app = output / APP_NAME
@@ -242,7 +150,7 @@ def notarize(output, tag):
     app = output / APP_NAME
     executables = [
         app,
-        *(app / "Contents/Resources/engine" / name for name in RUNTIME_BINARIES),
+        *(app / "Contents/MacOS" / name for name in PRODUCT_BINARIES),
     ]
     for executable in executables:
         signature = subprocess.run(
@@ -308,18 +216,12 @@ def main():
     commands = parser.add_subparsers(dest="action", required=True)
     prepare = commands.add_parser("version")
     prepare.add_argument("version")
-    cli = commands.add_parser("check-cli")
-    cli.add_argument("executable", type=Path)
-    download = commands.add_parser("download-cli")
-    download.add_argument("output", type=Path)
     commands.add_parser("notary-preflight")
     notarized = commands.add_parser("notarize")
     notarized.add_argument("output", type=Path)
     notarized.add_argument("tag")
     manifest = commands.add_parser("record")
     manifest.add_argument("output", type=Path)
-    manifest.add_argument("profile", choices=("dev-small", "release"))
-    manifest.add_argument("--engine-provenance", type=Path)
     package = commands.add_parser("archive")
     package.add_argument("output", type=Path)
     package.add_argument("tag")
@@ -327,12 +229,8 @@ def main():
     try:
         if args.action == "version":
             bump(ROOT, args.version)
-        elif args.action == "check-cli":
-            check_cli(args.executable, validate(ROOT)["upstream"])
-        elif args.action == "download-cli":
-            download_cli(args.output, validate(ROOT)["upstream"])
         elif args.action == "record":
-            record(args.output, args.profile, args.engine_provenance)
+            record(args.output)
         elif args.action == "notary-preflight":
             notarization.preflight(os.environ)
         elif args.action == "notarize":

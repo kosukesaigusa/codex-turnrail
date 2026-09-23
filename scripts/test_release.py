@@ -1,10 +1,7 @@
 """Exercise release invariants before network publication or binary execution."""
 
-import hashlib
-import io
 import json
 import plistlib
-import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,8 +9,8 @@ from unittest.mock import patch
 
 import project_metadata as metadata
 import release
-from engine_artifacts import digest, identity
 from release_tag import require_ci
+from test_product_evidence import report_fixture
 
 
 class ReleaseTests(unittest.TestCase):
@@ -31,59 +28,25 @@ class ReleaseTests(unittest.TestCase):
         (self.root / metadata.VERSION_GENERATED).parent.mkdir(parents=True)
         metadata.write_product_version(self.root)
 
-    def test_reused_engine_preserves_its_original_source_without_changing_app_source(
-        self,
-    ):
-        source_inputs = {
-            name: "c" * 40
-            for name in ("engine", ".github", "scripts", "tests", "justfile")
-        }
-        inputs = identity(source_inputs, {"rustc": "fixture"})
+    def test_official_engine_identity_must_match_the_supported_contract(self):
+        upstream = metadata.read_upstream(metadata.ROOT)
         manifest = {
-            "source_commit": "a" * 40,
-            "profile": "release",
+            "upstream": upstream,
             "engine": {
-                "origin": "verified-artifact",
-                "evidence": {
-                    "schema_version": 1,
-                    "kind": "verified",
-                    "identity": inputs,
-                    "key": digest(inputs),
-                    "source_commit": "b" * 40,
-                    "workflow_commit": "b" * 40,
-                },
-            },
-        }
-        with patch(
-            "engine_artifacts.source_inputs", return_value=source_inputs
-        ) as read:
-            release.validate_engine_source(manifest)
-        read.assert_called_once_with(release.ROOT, "a" * 40)
-        self.assertEqual(manifest["engine"]["evidence"]["source_commit"], "b" * 40)
-        self.assertEqual(manifest["source_commit"], "a" * 40)
-        with (
-            patch("engine_artifacts.source_inputs", return_value={}),
-            self.assertRaisesRegex(ValueError, "Engine inputs"),
-        ):
-            release.validate_engine_source(manifest)
-
-    def test_source_build_and_unknown_origins_cannot_hide_source_drift(self):
-        manifest = {
-            "source_commit": "a" * 40,
-            "profile": "release",
-            "engine": {
-                "origin": "source-build",
-                "source_commit": "a" * 40,
-                "profile": "release",
+                "origin": "installed-official",
+                "evidence": report_fixture()["official_engine"],
             },
         }
         release.validate_engine_source(manifest)
-        manifest["engine"]["source_commit"] = "b" * 40
-        with self.assertRaisesRegex(ValueError, "source and profile"):
+        manifest["engine"]["evidence"]["signing_team"] = "ANOTHERTEAM"
+        with self.assertRaisesRegex(ValueError, "supported contract"):
             release.validate_engine_source(manifest)
-        manifest["engine"]["origin"] = "unknown"
-        with self.assertRaisesRegex(ValueError, "unknown Engine origin"):
-            release.validate_engine_source(manifest)
+        for origin in ("source-build", "verified-artifact", "unknown"):
+            manifest["engine"]["origin"] = origin
+            with self.assertRaisesRegex(
+                ValueError, "unmodified installed official Engine"
+            ):
+                release.validate_engine_source(manifest)
 
     def test_reused_engine_cannot_weaken_exact_tagged_app_source_validation(self):
         manifest = {
@@ -160,112 +123,19 @@ class ReleaseTests(unittest.TestCase):
 
     def test_incomplete_or_failed_runtime_reports_are_rejected(self):
         path = self.root / "runtime.json"
-        cases = [
-            {"case": name, "passed": True}
-            for name in ("code_mode", "approval_accept", "approval_decline")
-        ]
-        path.write_text(json.dumps(cases))
+        report = report_fixture()
+        path.write_text(json.dumps(report))
         release.verify_report(path)
-        for report in (
+        cases = report["scenarios"]
+        for invalid in (
             cases[:2],
-            [cases[0], cases[0], cases[2]],
-            [*cases[:2], {"case": "approval_decline", "passed": False}],
+            [cases[0]] * len(cases),
+            [*cases[:-1], {"case": cases[-1]["case"], "passed": False}],
         ):
+            report["scenarios"] = invalid
             path.write_text(json.dumps(report))
-            with self.subTest(report=report), self.assertRaises(ValueError):
+            with self.subTest(cases=invalid), self.assertRaises(ValueError):
                 release.verify_report(path)
-
-    def test_corrupt_official_download_is_never_executed(self):
-        upstream = metadata.read_upstream(metadata.ROOT)
-        source = {
-            "draft": False,
-            "prerelease": False,
-            "assets": [
-                {
-                    "name": "codex-aarch64-apple-darwin.tar.gz",
-                    "digest": "sha256:" + "0" * 64,
-                    "browser_download_url": "https://example.com/archive",
-                    "size": 3,
-                }
-            ],
-        }
-        with (
-            patch.object(
-                release,
-                "github",
-                return_value={
-                    "object": {"type": "commit", "sha": upstream["codex"]["commit"]}
-                },
-            ),
-            patch.object(release, "source_release", return_value=source),
-            patch.object(
-                release.urllib.request, "urlopen", return_value=io.BytesIO(b"bad")
-            ),
-            patch.object(release, "check_cli") as execute,
-            self.assertRaisesRegex(ValueError, "checksum"),
-        ):
-            release.download_cli(self.root / "codex", upstream)
-        execute.assert_not_called()
-        self.assertFalse((self.root / "codex").exists())
-
-    def test_pinned_prerelease_download_keeps_commit_checksum_and_version_gates(self):
-        upstream = metadata.read_upstream(metadata.ROOT)
-        upstream["codex"]["tag"] = "rust-v0.154.0-alpha.6.2"
-        content = b"fixture binary"
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-            member = tarfile.TarInfo("codex-aarch64-apple-darwin")
-            member.size = len(content)
-            archive.addfile(member, io.BytesIO(content))
-        data = buffer.getvalue()
-        source = {
-            "tag_name": upstream["codex"]["tag"],
-            "draft": False,
-            "prerelease": True,
-            "assets": [
-                {
-                    "name": "codex-aarch64-apple-darwin.tar.gz",
-                    "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
-                    "browser_download_url": "https://example.com/archive",
-                    "size": len(data),
-                }
-            ],
-        }
-        output = self.root / "codex"
-        with (
-            patch.object(
-                release,
-                "github",
-                return_value={
-                    "object": {"type": "commit", "sha": upstream["codex"]["commit"]}
-                },
-            ),
-            patch.object(release, "source_release", return_value=source) as source_api,
-            patch.object(
-                release.urllib.request, "urlopen", return_value=io.BytesIO(data)
-            ),
-            patch.object(
-                release, "run", return_value="codex-cli 0.154.0-alpha.6.2"
-            ) as execute,
-        ):
-            release.download_cli(output, upstream)
-        source_api.assert_called_once_with("rust-v0.154.0-alpha.6.2")
-        execute.assert_called_once()
-        self.assertEqual(output.read_bytes(), content)
-
-    def test_changed_source_commit_stops_before_downloading_a_release(self):
-        upstream = metadata.read_upstream(metadata.ROOT)
-        with (
-            patch.object(
-                release,
-                "github",
-                return_value={"object": {"type": "commit", "sha": "0" * 40}},
-            ),
-            patch.object(release, "source_release") as source_api,
-            self.assertRaisesRegex(ValueError, "pinned source commit"),
-        ):
-            release.download_cli(self.root / "codex", upstream)
-        source_api.assert_not_called()
 
     def test_latest_exact_revision_ci_must_succeed(self):
         for conclusion, status in (

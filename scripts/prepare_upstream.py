@@ -3,29 +3,26 @@
 
 import argparse
 import json
-import plistlib
-import stat
 import subprocess
 import sys
 import tempfile
-import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from github_api import github
+from official_app import extract, inspect
 from project_metadata import (
     GENERATED,
     ROOT,
     VERSION_GENERATED,
-    codex_version,
     metadata_bytes,
     product_version,
     read_upstream,
     supported_swift,
+    validate_cli_version,
     version_tuple,
 )
 from release import bump
-from sync_upstream import UpstreamError, update
-from upstream_watch import app_candidate, download_app_file, source_release
+from upstream_watch import app_candidate, download_app_file
 
 
 def inspect_app(candidate, directory):
@@ -39,79 +36,36 @@ def inspect_app(candidate, directory):
     if archive.stat().st_size != candidate["size"]:
         raise ValueError("The official app archive size does not match its appcast.")
     extracted = directory / "extracted"
-    extracted.mkdir()
-    with zipfile.ZipFile(archive) as bundle:
-        links = []
-        for entry in bundle.infolist():
-            path = PurePosixPath(entry.filename)
-            if path.is_absolute() or ".." in path.parts or "\\" in entry.filename:
-                raise ValueError("Unsafe path in official app archive.")
-            if stat.S_ISLNK(entry.external_attr >> 16):
-                target = bundle.read(entry).decode()
-                resolved = (extracted / path.parent / target).resolve()
-                if not resolved.is_relative_to(extracted.resolve()):
-                    raise ValueError("Unsafe symlink in official app archive.")
-                links.append((path, target))
-            else:
-                destination = Path(bundle.extract(entry, extracted))
-                destination.chmod((entry.external_attr >> 16) & 0o777)
-        # Create symlinks only after ordinary files, so extraction cannot traverse one.
-        for path, target in links:
-            link = extracted / path
-            link.parent.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(target)
-        for path, _ in links:
-            if not (extracted / path).resolve().is_relative_to(extracted.resolve()):
-                raise ValueError(
-                    "The extracted app contains an escaping symlink chain."
-                )
-    app = extracted / "ChatGPT.app"
-    requirement = (
-        'anchor apple generic and identifier "com.openai.codex" '
-        'and certificate leaf[subject.OU] = "2DC432GLL2"'
-    )
-    subprocess.run(
-        ["codesign", "--verify", "--deep", "--strict", "-R=" + requirement, str(app)],
-        check=True,
-    )
-    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    extract(archive, extracted)
     expected = {
-        "CFBundleIdentifier": "com.openai.codex",
-        "CFBundleShortVersionString": candidate["version"],
-        "CFBundleVersion": candidate["build"],
-    }
-    if any(info[key] != value for key, value in expected.items()):
-        raise ValueError("The signed app metadata does not match the update feed.")
-    version = subprocess.check_output(
-        [str(app / "Contents/Resources/codex"), "--version"], text=True
-    ).strip()
-    if not version.startswith("codex-cli "):
-        raise ValueError("The candidate app does not report a Codex CLI version.")
-    tag = "rust-v" + version.removeprefix("codex-cli ")
-    codex_version(tag)
-    return tag
-
-
-def prepare(root, candidate, tag):
-    current, _ = product_version(root)
-    major, minor, _ = version_tuple(current)
-    if major != 0:
-        raise ValueError("Automatic upstream versioning requires the 0.x policy.")
-    source_release(tag)
-    commit = update(root, tag)
-    metadata = read_upstream(root)
-    metadata["app"] = {
         "bundle_identifier": "com.openai.codex",
         "version": candidate["version"],
         "build": candidate["build"],
     }
+    return inspect(extracted / "ChatGPT.app", expected)["cli_version"]
+
+
+def prepare(root, candidate, version):
+    current, _ = product_version(root)
+    major, minor, _ = version_tuple(current)
+    if major != 0:
+        raise ValueError("Automatic upstream versioning requires the 0.x policy.")
+    validate_cli_version(version)
+    metadata = read_upstream(root)
+    if int(candidate["build"]) <= int(metadata["app"]["build"]):
+        raise ValueError("The candidate must advance the supported app build.")
+    metadata["app"] = {
+        "bundle_identifier": "com.openai.codex",
+        "version": candidate["version"],
+        "build": candidate["build"],
+        "cli_version": version,
+    }
     (root / "upstream.toml").write_bytes(metadata_bytes(metadata))
     (root / GENERATED).write_text(supported_swift(metadata))
     bump(root, f"0.{minor + 1}.0")
-    return commit
 
 
-def publish(repository, branch, candidate, tag, commit):
+def publish(repository, branch, candidate, version):
     prs = github(
         f"repos/{repository}/pulls?state=all&head={repository.split('/')[0]}:{branch}"
     )
@@ -131,7 +85,6 @@ def publish(repository, branch, candidate, tag, commit):
             "git",
             "add",
             "--",
-            "engine",
             "upstream.toml",
             str(GENERATED),
             "packaging/Info.plist",
@@ -153,11 +106,14 @@ def publish(repository, branch, candidate, tag, commit):
         "## Summary\n\n"
         f"Update the supported ChatGPT macOS app to {candidate['version']} "
         f"({candidate['build']}). "
-        f"Its signed bundle reports Codex CLI {tag[6:]}; Engine base is `{commit}`.\n\n"
-        "The official Apple signature and exact app metadata passed inspection. "
-        "The Engine changes were prepared with a three-way upstream merge.\n\n"
+        f"Its signed bundle reports `{version}`.\n\n"
+        "The app, Engine, and Code Mode Host passed OpenAI signature inspection. "
+        "Update the exact app compatibility contract; Turnrail runs the Engine "
+        "from the installed ChatGPT app. "
+        "Public CLI source availability is not required.\n\n"
         "## Test plan\n\n"
         "- [ ] Product CI passes for this commit.\n"
+        "- [ ] Routing fixtures pass with this exact official Engine.\n"
         "- [x] Increment the Turnrail minor version and build number.\n\n"
         "This PR merges automatically after verified CI. Main CI then creates a "
         "Draft Release. Before publishing that draft, verify Codex UI turns, "
@@ -205,10 +161,10 @@ def main():
             print("This candidate has already been reviewed or is under review.")
             return 0
         with tempfile.TemporaryDirectory(prefix="turnrail-app-candidate-") as temporary:
-            tag = inspect_app(candidate, Path(temporary))
-        commit = prepare(ROOT, candidate, tag)
+            version = inspect_app(candidate, Path(temporary))
+        prepare(ROOT, candidate, version)
         if args.publish:
-            publish(args.repository, branch, candidate, tag, commit)
+            publish(args.repository, branch, candidate, version)
         else:
             print(f"Prepared {branch}; review the uncommitted changes.")
         return 0
@@ -217,7 +173,6 @@ def main():
         ValueError,
         KeyError,
         TypeError,
-        UpstreamError,
         subprocess.CalledProcessError,
     ) as error:
         print(f"Upstream candidate preparation failed: {error}", file=sys.stderr)

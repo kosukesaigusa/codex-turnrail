@@ -110,7 +110,7 @@ struct OnboardingTests {
     #expect(model.registryState == state)
     #expect(
       await gate.commands.allSatisfy {
-        $0.environment["CODEX_TURNRAIL_EXPECTED_EMAIL"] == "account@example.com"
+        $0.expectedEmail == "account@example.com"
       })
   }
 
@@ -141,6 +141,7 @@ struct OnboardingTests {
     defer { fixture.remove() }
     let model = TurnrailViewModel(
       engineURLResult: .success(URL(filePath: "/unused-test-engine")),
+      routerURLResult: .success(URL(filePath: "/unused-test-router")),
       registryStoreResult: .success(fixture.store),
       commandExecutor: CommandExecutor { _, _, _ in
         throw CompatibilityProbeError.engineUnavailable("/unused-test-engine")
@@ -167,6 +168,7 @@ struct OnboardingTests {
     defer { fixture.remove() }
     let model = TurnrailViewModel(
       engineURLResult: .success(URL(filePath: "/unused-test-engine")),
+      routerURLResult: .success(URL(filePath: "/unused-test-router")),
       registryStoreResult: .success(fixture.store),
       commandExecutor: CommandExecutor { _, _, _ in
         Issue.record("A second official app must not be launched")
@@ -250,6 +252,7 @@ private struct OnboardingFixture {
     let logouts = logouts
     let model = TurnrailViewModel(
       engineURLResult: .success(URL(filePath: "/unused-test-engine")),
+      routerURLResult: .success(URL(filePath: "/unused-test-router")),
       registryStoreResult: .success(store),
       commandExecutor: CommandExecutor { _, arguments, environment in
         #expect(arguments.first == "logout")

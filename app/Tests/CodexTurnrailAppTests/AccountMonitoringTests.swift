@@ -13,6 +13,7 @@ struct AccountMonitoringTests {
     let gate = IdentityGate()
     let model = TurnrailViewModel(
       engineURLResult: .success(URL(filePath: "/unused-test-engine")),
+      routerURLResult: .success(URL(filePath: "/unused-test-router")),
       registryStoreResult: .success(fixture.store),
       commandExecutor: CommandExecutor { _, _, _ in
         CommandResult(exitCode: 0, standardOutput: "", standardError: "")
@@ -136,6 +137,7 @@ private struct Fixture {
   func model(usageReader: AccountUsageReader) -> TurnrailViewModel {
     TurnrailViewModel(
       engineURLResult: .success(URL(filePath: "/unused-test-engine")),
+      routerURLResult: .success(URL(filePath: "/unused-test-router")),
       registryStoreResult: .success(store),
       commandExecutor: CommandExecutor { _, _, _ in
         CommandResult(exitCode: 0, standardOutput: "", standardError: "")

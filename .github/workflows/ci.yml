@@ -65,36 +65,10 @@ jobs:
     name: File size policy
     uses: ./.github/workflows/blob-size.yml
 
-  engine-inputs:
-    name: Engine inputs
-    needs: [changes, checks, dependencies, spelling, blob-size]
-    if: ${{ needs.changes.outputs.engine_required == 'true' }}
-    uses: ./.github/workflows/engine-inputs.yml
-    with:
-      source: ${{ github.sha }}
-
-  engine:
-    name: Engine and runtime
-    needs: engine-inputs
-    uses: ./.github/workflows/engine.yml
-    with:
-      source: ${{ needs.engine-inputs.outputs.source }}
-      identity: ${{ needs.engine-inputs.outputs.identity }}
-      key: ${{ needs.engine-inputs.outputs.key }}
-
   required:
     name: CI required
     if: ${{ always() }}
-    needs:
-      [
-        changes,
-        checks,
-        dependencies,
-        spelling,
-        blob-size,
-        engine-inputs,
-        engine,
-      ]
+    needs: [changes, checks, dependencies, spelling, blob-size]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

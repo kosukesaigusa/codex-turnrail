@@ -2,13 +2,13 @@
 
 ## Versioning
 
-Turnrail uses one product version for the app and its bundled Engine. `packaging/Info.plist` is the canonical product version and monotonically increasing build number.
+Turnrail uses one product version for the Swift app and router. `packaging/Info.plist` is the canonical product version and monotonically increasing build number.
 
 The Settings sidebar displays this product version. `just metadata-write` generates `TurnrailVersion.generated.swift` from the plist, and `just metadata-check` rejects a stale display version. `just version` updates both the plist and the generated display version.
 
 During `0.x` development, a patch release fixes bugs within the same supported ChatGPT app and Codex CLI combination. A minor release adds features or changes that supported combination. `1.0.0` will mark an explicitly stable product contract. Released tags and assets are never moved or replaced.
 
-`upstream.toml` records the ChatGPT app bundle identifier, version, and build together with the Codex Engine source repository, release tag, and commit. The required CLI version is derived from the source release tag. Generate the Swift compatibility contract with `just metadata-write`; `just metadata-check` rejects drift between this contract and the Engine version.
+`upstream.toml` records the exact ChatGPT app bundle identifier, version, build, and bundled CLI version in `[app]`. `[codex]` separately pins the retained reference source repository, tag, and commit. App compatibility does not depend on that source revision. Generate the Swift compatibility contract with `just metadata-write`; `just metadata-check` validates both records and rejects generated-contract drift.
 
 Prepare a version change as ordinary reviewed source:
 
@@ -36,75 +36,39 @@ Tagging requires a clean `main` worktree that matches the remote and a successfu
 
 Both entry points dispatch `.github/workflows/release.yml` from `main`, with an existing tag as its explicit input. The workflow rejects other branch refs, then verifies the tag, source ancestry, metadata, and CI before checking out the tagged commit and using the protected `release` environment. It then:
 
-1. Downloads the matching official CLI release and verifies its source commit, archive SHA-256, size, and executable version.
-2. Resolves a verified optimized Engine artifact with matching source, tooling, and runner inputs. If none remains, it explicitly builds and verifies a new Engine using the parallel CI pipeline. It then builds the Swift app from the tagged source.
-3. Compares stable and experimental app-server schemas, includes component notices, signs every executable and the app, and verifies the signatures.
-4. Runs all three runtime scenarios against the finished app.
+1. Downloads the pinned official ChatGPT app and verifies archive paths, OpenAI signatures, the exact app version/build, and its bundled CLI version.
+2. Builds the Swift app and router from the tagged source. It does not build or bundle a Rust Engine.
+3. Includes product notices, signs both Swift executables and the app, and verifies their signatures.
+4. Runs the router-core fixture with the finished hook helper and official Engine, requiring Code Mode, account switching, titles, compaction, accepted and declined approvals, no replay after uncertain delivery, new-turn recovery, idle-connection recovery, and native HTTP web search to pass.
 5. Submits a signed ZIP to Apple's notary service, requires `Accepted`, attaches the ticket to the app, and verifies the ticket and Gatekeeper assessment.
 6. Creates the final app ZIP from the stapled app and records its original checksum alongside the build, runtime, and notarization reports.
 7. Uploads only the app ZIP to a Draft Release with a direct download link and notes generated from merged PRs.
 8. Downloads that uploaded asset by its GitHub asset ID and checks its SHA-256 and size against the original archive. The GitHub digest must also match. A mismatch fails the job and leaves the release as a draft with pending verification.
 9. Records successful download verification in the draft notes and retains the detailed verification files as an Actions artifact for 90 days. Publishing remains a separate maintainer action.
 
-The build manifest records the product and upstream versions, app source commit, build profile, compiler versions, signer, binary hashes, and notarization report hash. For a reused Engine, it also embeds the original Engine source/workflow commits, input identity, producer run and attempt, and hashes of the unsigned runtime and its CI/runtime evidence. The app source commit must still match the exact tagged commit. Archive creation rejects uncommitted source, another source revision, changed binaries or app resources, failed or incomplete reports, unnotarized apps, and version mismatches. It verifies the attached ticket and Gatekeeper assessment again before creating the ZIP.
+The build manifest records the product and upstream versions, tagged app source commit, Swift compiler, signer, app/router hashes, and notarization report hash. Its official Engine record contains the supported app identity, OpenAI signing team, and hashes of the separately installed official CLI and Host used during verification. Archive creation rejects uncommitted source, another source revision, changed binaries or resources, failed or incomplete reports, unnotarized apps, and version mismatches. It verifies the attached ticket and Gatekeeper assessment again before creating the ZIP.
 
 An existing tag whose workflow failed before creating a release can be retried with the workflow's manual `tag` input, selecting `main` as the workflow ref. If tagging succeeded but dispatch failed, start the same workflow manually; keep the tag. If a Draft Release already exists, inspect it and retain its assets; the workflow does not overwrite it.
 
-## Verified Engine reuse
+## CI impact and official runtime verification
 
-CI selects checks by affected inputs, not by a special README rule. It compares the PR base with its tested merge commit, or the previous main commit with the pushed commit. All changes receive formatting, Markdown, workflow, spelling, and file-size checks. Additional checks are combined when a change affects multiple areas:
+CI selects checks by affected inputs, not by a special README rule. It compares the PR base with its tested merge commit, or the previous main commit with the pushed commit. All changes receive formatting, Markdown, workflow, spelling, and file-size checks. Additional checks are combined:
 
-| Changed inputs                                                            | Additional validation                                                                                  |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Product documentation, screenshots, and root Markdown                     | None; static checks only                                                                               |
-| Monitoring, release automation, release notes, and CI selection           | Product Python tooling tests                                                                           |
-| Swift source/tests, app resources, versions, or compatibility metadata    | Swift formatting, app build/tests, and tooling tests                                                   |
-| Rust dependency policy workflow                                           | Dependency checks and tooling tests                                                                    |
-| Engine source, build commands, runtime verification, or evidence contract | Engine formatting/source policies, dependency checks, tooling tests, and both Engine verification jobs |
-| Shared development build helper                                           | Both app and Engine checks                                                                             |
+| Changed inputs                                                                                   | Additional validation                                                 |
+| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Product documentation, screenshots, and root Markdown                                            | Static checks only                                                    |
+| Monitoring, release automation, release notes, and CI selection                                  | Python tooling tests                                                  |
+| Swift source/tests, app resources, versions, compatibility metadata, or official-runtime helpers | Swift build/tests, official Engine routing fixture, and tooling tests |
+| Reference Engine source or its build/evidence helpers                                            | Source policies, dependency checks, and tooling tests                 |
+| Shared development build helper                                                                  | App, tooling, and reference-source policy checks                      |
 
-`scripts/ci_changes.py` defines these impact rules. Renames include both the old and new paths, and deletions keep their original impact. Unknown paths or missing comparison data fail with an explicit error; classify new build helpers and workflows before adding them. In particular, a new helper used by the Engine must also be included in its input scopes.
+`scripts/ci_changes.py` defines impact. Renames include old and new paths; deletions preserve their impact. Unknown paths or missing comparison data stop classification with an explicit error. Manual dispatch uses the same rules, with `scope: full` available explicitly. Bot branches and authors receive no exemption.
 
-Manual CI dispatch defaults to `scope: auto` and uses the same rules. A branch is compared with its merge base on main; a dispatch on the current main commit compares its first parent. `scope: full` explicitly requests every check. Automated upstream and README PRs use this same selection; their branch names or author identities do not grant an exemption. The required CI gate rejects failed checks and any skip not authorized by the computed plan.
+No automatic product CI or release job compiles the reference Rust Engine. The signed official app supplies the runtime used by the isolated fixture. CI downloads the exact pinned installation, verifies its identity before execution, and drives it through the native Swift router using synthetic credentials and a mock model. Packaging repeats this verification with the signed distribution helper. Real-account and desktop UI results remain separate evidence.
 
-The Engine input scopes in `scripts/engine_artifacts.py` cover `engine/`, the actual runtime build and measurement helpers, shared GitHub/evidence helpers, runtime integration probes, and Engine producer workflows. They do not include the whole `scripts/` directory, general CI orchestration, release automation, or app/documentation inputs. The same scopes determine both Engine CI selection and the reusable artifact identity. Markdown inside `engine/` remains an Engine input because prompts can be compiled into binaries.
+The required CI gate rejects failures and skips not authorized by the computed plan. Runtime reports are uploaded for inspection. PR and manual CI dispatches share a branch concurrency group with cancellation disabled; review the latest result for the exact candidate revision.
 
-When Engine verification is required, its SHA-256 artifact key combines these Git objects with the target, two build profiles, actual Rust compiler, Xcode, SDK, Clang, macOS build, and hosted runner image. External compiler overrides are rejected. Changes to any of these inputs require a matching verified artifact or a new Engine build. The same input scopes govern release artifact reuse, so a monitor-only change does not invalidate an otherwise matching Engine.
-
-When no retained successful result matches, two jobs run on separate macOS runners in parallel:
-
-- `engine-checks.yml` builds `dev-small`, runs the existing nextest suites and Clippy, assembles the runtime, and verifies execution and both approval decisions.
-- `engine-release.yml` builds the optimized `release` Engine and Code Mode Host, then verifies that runtime with the same three scenarios. It has no signing credentials.
-
-Only after both jobs succeed does `engine.yml` seal a `turnrail-engine-<input-key>-<run-attempt>` artifact containing the unsigned runtime and its checksummed CI/runtime evidence. It is retained for 90 days. This means two major Engine build stages for new inputs, including additional test-binary compilation and Clippy work within CI. No rebuild is needed in main CI or release packaging while matching evidence remains available. Parallelization reduces elapsed waiting time; it does not reduce the runner minutes used by those two jobs.
-
-Reuse checks GitHub's artifact ID, archive size and SHA-256, run/attempt and workflow provenance, source Git objects, internal checksums, successful test counts, and all runtime scenarios. Only completed successful runs from this repository's CI or release workflow may provide cross-run evidence. Fork PRs can run CI but cannot supply an Engine to another run or a signed release. A release may consume its own newly built Engine only after its Engine gate succeeds. The trust boundary includes contributors with write access to this repository; this is not a mechanism for accepting arbitrary contributor binaries.
-
-Expired, absent, failed-run, and superseded-attempt artifacts explicitly select a new build. API failures, changed inputs within a selected artifact, malformed evidence, and checksum mismatches stop verification; they do not authorize reuse or silently switch to another artifact. Deleted or expired artifacts selected earlier in a run fail that run; rerun CI to plan again.
-
-Use **Re-run all jobs** when retrying a failed Engine pipeline. CI and optimized candidates must come from the same run attempt; **Re-run failed jobs** cannot combine an earlier successful candidate with a later attempt. Candidate artifacts and diagnostic reports include their attempt number, so full retries never overwrite evidence.
-
-Identical Engine keys share a concurrency group with cancellation disabled, so a second producer waits and then looks for the first result. PR and manual CI dispatches for the same branch also share a CI group. GitHub concurrency keeps at most one running and one pending member; a newer pending run can replace an older pending run. Review the latest exact-revision CI result. This does not remove GitHub's approval prompt for a bot-created PR.
-
-The first run after introducing this pipeline builds both profiles because older reports do not satisfy the new evidence contract. Runner image updates and the 90-day retention limit can also require rebuilding unchanged source. The artifact reference and build/reuse reason appear in the Actions logs and plan summary.
-
-## Build cache and measurements
-
-The optimized Engine job uses a separate Cargo compilation cache. Its keys separate compiler, Xcode, SDK, release-profile and build-flag changes, then identify the source revision. An older cache within the same compiler contract can supply intermediate compilation outputs; Cargo still validates its fingerprints and builds the selected source with `--locked`. This cache never substitutes for the verified Engine artifact.
-
-The cache contains Cargo downloads and the Rust target directory. It excludes the signing keychain, app bundle, account data, and credential files. The optimized job saves it only after its runtime passes verification, before generated-file cleanup. Signing, protocol comparison, final-app runtime probes, notarization, and uploaded-ZIP verification run for every release, including when the Engine is reused.
-
-Every optimized Engine build enables Cargo `--timings`. Reusing an Engine does not run Cargo or fabricate a new timing report; follow its recorded producer run for the original measurements. The `turnrail-release-build-report-<run-attempt>` Actions artifact retains fresh HTML timing reports, elapsed time, `/usr/bin/time -l` resource measurements, runner hardware and memory/swap snapshots for 14 days. Failure reports cannot reuse HTML from a restored cache. BSD time's maximum resident size is not an aggregate peak for all concurrent compiler processes; inspect the Cargo concurrency graph and paging snapshots alongside it.
-
-To compare compiler concurrency and verify a warm restore on the same source revision:
-
-```sh
-gh workflow run release-benchmarks.yml --repo kosukesaigusa/codex-turnrail --ref main
-```
-
-This explicitly runs cold builds with two and three workers, plus a two-worker build on a fresh runner that must restore the exact cache saved by the cold two-worker build. Each case builds the Engine and Host with the same optimized release profile and verifies the packaged runtime. Cold means the Rust target directory is absent before compilation. The two-worker cold build also prepares the main release cache. Each case uploads a separate report before cleanup.
-
-Compare the timing reports and resource measurements before changing `CARGO_BUILD_JOBS` or release optimization settings. Runner variability and cache transfer time are part of the result; one comparison does not establish a universal speedup. Cargo build caches do not skip runtime validation.
+The reusable Engine workflows and manually dispatched `release-benchmarks.yml` remain reference-source tools. Their Cargo caches and runtime artifacts are not inputs to the Turnrail release package.
 
 ## Signing setup
 
@@ -130,7 +94,7 @@ To prepare these settings:
 
 Apple Development signing remains available for local development packages. The GitHub distribution workflow requires Developer ID Application signing. ZIP distribution does not need a Developer ID Installer certificate.
 
-Notarization uses the explicitly configured App Store Connect Team API key. All distributed executables are signed with hardened runtime and a secure timestamp. The Code Mode Host retains its required V8 entitlements.
+Notarization uses the explicitly configured App Store Connect Team API key. All distributed executables are signed with hardened runtime and a secure timestamp. The separately installed official Code Mode Host retains OpenAI's signature and entitlements; Turnrail does not re-sign it.
 
 If Apple's processing is still pending after the 45-minute wait, the workflow stops and retains the submission ID, original upload ZIP, build manifest, and runtime report in the `turnrail-notarization-recovery` Actions artifact for seven days. Completed submissions also include Apple's diagnostic log. Restore these files and extract the original app into one output directory at the same tagged source revision, then run:
 
@@ -151,7 +115,7 @@ Before publishing a draft:
 - Require a successful release workflow with completed uploaded-ZIP verification in the draft notes.
 - Download the app ZIP from the Draft Release and extract it for the manual checks below.
 - Verify Gatekeeper behavior and launch on a Mac without development tools.
-- Verify official UI turns, Shell, JavaScript, approvals, account setup, reauthentication, next-turn account switching, and folder rules.
+- Verify official UI turns, the in-app browser, automatic titles, Shell, JavaScript, approvals, account setup, reauthentication, next-turn account switching, and folder rules.
 - Record these results and any limitations in the release notes.
 - After publishing, the README download-link PR is created, checked, and merged automatically. Inspect a failed automation run if it stops.
 
@@ -179,17 +143,17 @@ If verification fails, the job retains the available records and leaves the draf
 
 The monitor reads the ChatGPT app's configured production appcast and the latest stable `openai/codex` CLI release independently. The appcast and official app archive use curl with explicit time and size limits; redirects, HTTP failures and malformed responses stop inspection. It maintains one tracking issue only for an unsupported ChatGPT app update or a monitoring error, including a failed CLI lookup. The latest standalone CLI release is reference information in the Actions step summary and observation artifact; its version does not open or keep open the issue, prepare an update PR, or change the Engine. CLI-only changes do not rewrite the tracking issue. Once the supported ChatGPT app catches up and monitoring succeeds, the next observation closes the issue regardless of the standalone CLI version. A later ChatGPT update or monitoring failure reopens the same issue.
 
-A newer CLI alone does not update the Engine. For a newer app build, the macOS job downloads the official archive, validates paths, verifies the Apple signature against OpenAI's signing team and bundle identifier, and checks the exact app version and build. Only then does it read the bundled CLI version and require its corresponding public source release. This can be a prerelease when the signed official app bundles that exact version. The source tag, commit, Engine version and bundled CLI must still match exactly; no nearest-version selection is allowed.
+A newer standalone CLI alone does not change app compatibility. For a newer app build, the macOS job downloads the official archive, validates its paths and size, verifies the app and both runtime executables against OpenAI's signing team, and checks the exact app version and build. Only then does it read the bundled CLI version. A public CLI source release is not required; the signed app supplies the runtime being tested.
 
-The existing three-way merge script prepares the Engine update. App metadata, the generated Swift contract, the next Turnrail minor version, and the incremented build number are updated in the same ready-for-review PR. Versioning follows the `0.x` policy (for example, `0.7.3 (34)` becomes `0.8.0 (35)`); a future stable-version policy must be chosen explicitly. A conflict or missing source release stops preparation and is linked from the tracking issue. A build number identifies each candidate: existing PRs, closed PRs, and branches with human changes are never overwritten. Inspect an orphaned candidate branch manually after an interrupted publication.
+The candidate changes exactly four files: app metadata in `upstream.toml`, the generated Swift compatibility contract, `packaging/Info.plist`, and the generated Turnrail version. It leaves reference sources and their pin unchanged. Versioning follows the `0.x` policy (for example, `0.7.3 (34)` becomes `0.8.0 (35)`); a future stable-version policy must be chosen explicitly. Signature, identity, or runtime verification failures stop automation and require investigation. A build number identifies each candidate: existing PRs, closed PRs, and branches with human changes are never overwritten. Inspect an orphaned candidate branch manually after an interrupted publication.
 
-The automation explicitly dispatches `ci.yml` for the candidate branch after creating its PR. This allows validation with the repository's `GITHUB_TOKEN`; no additional GitHub App or personal token is required. GitHub may also display an approval request for the automatic `pull_request` run. Both triggers share a branch concurrency group and the verified Engine result, so approving the second run does not require another successful build for identical inputs. The automation consumes the successful dispatched CI run for automatic merging; clicking the separate approval banner is unnecessary. The banner is a GitHub requirement for `GITHUB_TOKEN`-created PR event runs, not a gate on the dispatched workflow. Removing the banner itself requires creating PRs with a separate GitHub App token or PAT; this pipeline needs neither.
+The automation explicitly dispatches `ci.yml` for the candidate branch after creating its PR. This allows validation with the repository's `GITHUB_TOKEN`; no additional GitHub App or personal token is required. GitHub may also display an approval request for the automatic `pull_request` run. Both triggers share a branch concurrency group and use the same affected-input checks; neither compiles the reference Engine. The automation consumes the successful dispatched CI run for automatic merging; clicking the separate approval banner is unnecessary. The banner is a GitHub requirement for `GITHUB_TOKEN`-created PR event runs, not a gate on the dispatched workflow. Removing the banner itself requires creating PRs with a separate GitHub App token or PAT; this pipeline needs neither.
 
 Enable **Allow GitHub Actions to create and approve pull requests** in repository Actions settings. Default token permissions remain read-only; write permissions are scoped to jobs that maintain the tracking issue, prepare PRs, create release tags, or dispatch validation/release workflows. Automation merges only its verified upstream and README PRs. Binary publication remains manual after real-device verification.
 
-After CI passes, the merge workflow runs trusted main code, validates the bot author, same-repository branch, exact head SHA, latest CI attempt, complete commit/file lists, and the generated version/compatibility changes. It never executes candidate code with its write token. Upstream PRs may change only the Engine and its app/version metadata; README PRs may change only the verified published download URL. Human-authored commits, draft PRs, unexpected files, conflicts, version collisions, or failed checks stop automatic merging. If main advanced without invalidating the candidate, the workflow updates the branch and requires fresh CI before merging.
+After CI passes, the merge workflow runs trusted main code, validates the bot author, same-repository branch, exact head SHA, latest CI attempt, complete commit/file lists, and the generated version/compatibility changes. It never executes candidate code with its write token. Upstream PRs may change only the four app/version metadata files; the reference source pin must remain unchanged. Merge commits preserve the candidate history. README PRs may change only the verified published download URL. Human-authored commits, draft PRs, unexpected files, conflicts, version collisions, or failed checks stop automatic merging. If main advanced without invalidating the candidate, the workflow updates the branch and requires fresh CI before merging.
 
-Because a `GITHUB_TOKEN` merge does not trigger push CI, the merge workflow explicitly dispatches main CI. A successful main run then creates the immutable tag and Draft Release. The maintainer installs that draft and verifies the launch contract, Codex UI turns, approvals, and account switching before publishing the same verified ZIP. Routine monitoring, versioning, CI startup, merging, packaging, and README updates require no manual approval. V8 or zsh changes also require reviewing their pinned component notices under `packaging/licenses/`.
+Because a `GITHUB_TOKEN` merge does not trigger push CI, the merge workflow explicitly dispatches main CI. A successful main run then creates the immutable tag and Draft Release. The maintainer installs that draft and verifies the launch contract, Codex UI turns, approvals, and account switching before publishing the same verified ZIP. Routine monitoring, versioning, CI startup, merging, packaging, and README updates require no manual approval. Review changes to the official runtime against routing metadata, hooks, model capabilities, and the account-service boundary described in the architecture guide.
 
 ## References
 

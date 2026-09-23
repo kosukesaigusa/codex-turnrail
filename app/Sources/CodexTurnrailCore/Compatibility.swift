@@ -78,7 +78,7 @@ public enum CompatibilityProbeError: LocalizedError, Equatable {
     case .bundledCLIUnavailable(let path):
       "The bundled Codex CLI is not executable at \(path)."
     case .engineUnavailable(let path):
-      "The Turnrail Engine is not executable at \(path)."
+      "The ChatGPT Engine is not executable at \(path)."
     case .commandFailed(let executable, let exitCode, let message):
       "\(executable) exited with code \(exitCode): \(message)"
     }
@@ -222,7 +222,7 @@ public enum CompatibilityEvaluator {
     }
     if engineVersion != contract.cliVersion {
       mismatches.append(
-        "Turnrail Engine \(engineVersion) does not match \(contract.cliVersion)."
+        "ChatGPT Engine \(engineVersion) does not match \(contract.cliVersion)."
       )
     }
 

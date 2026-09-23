@@ -1,43 +1,25 @@
-# Codex Turnrail Engine
+# Official Engine and reference sources
 
-`engine/` contains the Codex source tree used by Codex Turnrail. It is an ordinary directory in the product repository, with the upstream layout retained for updates and source review.
+Turnrail uses the unmodified Engine and Code Mode Host included in the supported ChatGPT installation. Its Swift router selects accounts outside those binaries. The app-server protocol, Code Mode runtime, browser integration, Shell, and approval implementation come from the official installation.
 
-## Provenance
+## Provenance and compatibility
 
-[`upstream.toml`](../upstream.toml) is the canonical record:
+[`upstream.toml`](../upstream.toml) records the exact official app bundle identifier, version/build, and bundled CLI version, separately from the reference source pin. It is the canonical reference; do not copy version numbers into this guide. The generated Swift contract must match that record.
 
-- Repository: <https://github.com/openai/codex>.
-- Base release: `rust-v0.155.0-alpha.9`.
-- Base commit: `434535bddfaf405a032f57be3c1096dd25ff6312`.
-- Matching CLI: `codex-cli 0.155.0-alpha.9`.
+The reference source tree in `engine/` retains its upstream layout, license, NOTICE, lockfiles, and product modifications for source inspection. It is not compiled or bundled by product CI or release packaging. Updating the reference tree still uses the [upstream preparation procedure](development.md#upstream-updates), including explicit conflict handling.
 
-The base matches the Codex CLI bundled with the supported ChatGPT macOS app. A ChatGPT app update requires renewed compatibility validation. The upstream [LICENSE](../engine/LICENSE), [NOTICE](../engine/NOTICE), component licenses, and lockfiles remain in the source tree.
+Every product routing fixture verifies OpenAI's signing team, exact app identity, CLI version, and the hashes of the official Engine and Host before recording success. Version equality alone is not sufficient. Changes to hooks, title tasks, request metadata, model discovery, or browser integration require renewed validation.
 
-Use the root `just sync-upstream` command to prepare an upstream update. The [update procedure](development.md#upstream-updates) explains its clean-worktree requirement, three-way merge, and conflict behavior.
+## Product implementation
 
-## Customization boundary
+Account selection, Keychain inspection, turn bindings, model catalog intersection, title registration, and WebSocket history recovery live in `app/Sources/CodexTurnrailCore/Router*.swift` and `OfficialEngine*.swift`. `CodexTurnrailRouter` is the small executable that starts the verified official Engine and relays app-server stdio.
 
-The Engine changes:
+The official app remains signed in to its original account. Model inference is routed separately; connected Apps and account-owned file services retain the original sign-in. The [architecture guide](architecture.md) defines this boundary and its effect on server-side file IDs.
 
-- Bind each loaded root task runtime to an explicit `AuthManager` and preserve authentication for active work.
-- Select permitted accounts from ordered directory rules at each top-level turn.
-- Reconstruct idle persisted or ephemeral task runtimes with the selected account while preserving identity and history.
-- Preserve authentication through history reverts, forks, child agents, and residency reloads.
-- Verify registered email before reauthentication credentials are saved and before account routing.
-- Record the last top-level turn start separately from the routing registry.
-- Advertise shared models for assigned accounts and validate the selected account's model before a turn.
-- Preserve a parent command's declined status in completion events when an intercepted zsh command is rejected or cancelled.
+## Validation
 
-The public app-server protocol remains identical to the matching upstream version. Code Mode Host and V8 runtime source remain upstream implementations.
+`just test-app` exercises routing and storage contracts with local fixtures. `just test-integration` runs the real official Engine and Host against a synthetic model through the native router. Product CI and packaging use this same official-runtime fixture. Real-service and desktop UI checks remain separate.
 
-Cancelling an intercepted command can interrupt shell startup before the parent command emits a completion event. The turn still completes with `Interrupted`; an accepted earlier subcommand may have run, while the cancelled subcommand must not run.
+Reference Engine development commands and manual build benchmarks are retained for source investigations. They follow `engine/AGENTS.md`, the shared storage lock, and the 30 GiB local reserve. Results from those reference binaries do not establish compatibility of the distributed Swift router.
 
-Product build, cleanup, upstream update, and integration entrypoints live at the repository root. Engine policy adjustments remain beside the relevant upstream tooling. The runtime probe is [`tests/integration/verify_runtime.py`](../tests/integration/verify_runtime.py); packaging and CI invoke the same probe.
-
-## Development and validation
-
-Use the root commands documented in [Development](development.md). Heavy local commands enforce the 30 GiB reserve, `dev-small`, disabled incremental compilation, and a shared lock. Tests do not inherit the user's routing root.
-
-Product CI lives in the root `.github/workflows/`. It checks both source trees and builds the Engine, Host, and runtime from one candidate revision. Vendored definitions beneath `engine/.github/` are not automatically discovered by GitHub Actions.
-
-[Architecture](architecture.md) defines the runtime contract. [Verification](verification.md) records successful checks, full-workspace failures, and unverified UI and account scenarios. [Roadmap](roadmap.md) tracks remaining delivery work.
+See [Development](development.md), [Verification](verification.md), and [Releases](releases.md).

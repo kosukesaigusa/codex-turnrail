@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import release_delivery as delivery
+from test_product_evidence import report_fixture
 
 
 class ReleaseDeliveryTests(unittest.TestCase):
@@ -34,12 +35,7 @@ class ReleaseDeliveryTests(unittest.TestCase):
         (self.output / self.archive_name).write_bytes(self.contents)
         (self.output / "build-manifest.json").write_text(json.dumps(self.manifest))
         (self.output / "runtime-verification.json").write_text(
-            json.dumps(
-                [
-                    {"case": name, "passed": True}
-                    for name in ("code_mode", "approval_accept", "approval_decline")
-                ]
-            )
+            json.dumps(report_fixture())
         )
         (self.output / "notarization-report.json").write_text(
             json.dumps({"status": "Accepted", "stapled": True})
@@ -233,7 +229,7 @@ class ReleaseDeliveryTests(unittest.TestCase):
         manifest_path.write_text(json.dumps(self.manifest))
         runtime = self.output / "runtime-verification.json"
         cases = json.loads(runtime.read_text())
-        cases[0]["passed"] = False
+        cases["scenarios"][0]["passed"] = False
         runtime.write_text(json.dumps(cases))
         self.write_checksums()
         with self.assertRaisesRegex(ValueError, "must pass"):

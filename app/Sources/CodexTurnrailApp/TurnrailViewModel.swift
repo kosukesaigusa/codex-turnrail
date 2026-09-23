@@ -121,6 +121,7 @@ final class TurnrailViewModel: ObservableObject {
   private let identityReader: AccountIdentityReader
   private let usageReader: AccountUsageReader
   private let engineURLResult: Result<URL, Error>
+  private let routerURLResult: Result<URL, Error>
   private let registryStoreResult: Result<AccountRegistryStore, Error>
   private var lastRefreshAt: Date?
   private var operationByAccountID: [UUID: UUID] = [:]
@@ -177,18 +178,24 @@ final class TurnrailViewModel: ObservableObject {
 
   convenience init() {
     let bundle = Bundle.main
-    let engineURLResult = Result {
-      try EnginePathResolver.resolve(
+    let routerURLResult = Result {
+      try RouterPathResolver.resolve(
         isPackagedApp: bundle.bundleURL.pathExtension == "app",
-        resourcesURL: bundle.resourceURL,
+        executablesURL: bundle.executableURL?.deletingLastPathComponent(),
         environment: ProcessInfo.processInfo.environment
       )
+    }
+    let engineURLResult = Result {
+      let app = URL(filePath: "/Applications/ChatGPT.app")
+      try OfficialEngineInstallation.verify(app: app)
+      return app.appending(path: "Contents/Resources/codex")
     }
     let registryStoreResult = Result {
       AccountRegistryStore(rootURL: try TurnrailApplicationSupport.rootURL())
     }
     self.init(
       engineURLResult: engineURLResult,
+      routerURLResult: routerURLResult,
       registryStoreResult: registryStoreResult,
       commandExecutor: .live,
       loginExecutor: .live,
@@ -207,6 +214,7 @@ final class TurnrailViewModel: ObservableObject {
 
   init(
     engineURLResult: Result<URL, Error>,
+    routerURLResult: Result<URL, Error>,
     registryStoreResult: Result<AccountRegistryStore, Error>,
     commandExecutor: CommandExecutor,
     loginExecutor: AccountLoginExecutor,
@@ -216,6 +224,7 @@ final class TurnrailViewModel: ObservableObject {
     usageReader: AccountUsageReader
   ) {
     self.engineURLResult = engineURLResult
+    self.routerURLResult = routerURLResult
     self.registryStoreResult = registryStoreResult
     self.commandExecutor = commandExecutor
     self.loginExecutor = loginExecutor
@@ -721,6 +730,7 @@ final class TurnrailViewModel: ObservableObject {
 
     do {
       let engineURL = try engineURLResult.get()
+      _ = try routerURLResult.get()
       let report = try compatibilityProbe(appURL, engineURL)
       let notice = StatusNotice.compatibility(report)
       state = report.isCompatible ? .ready(report) : .blocked(notice)
@@ -748,11 +758,11 @@ final class TurnrailViewModel: ObservableObject {
     }
 
     do {
-      let engineURL = try engineURLResult.get()
+      let routerURL = try routerURLResult.get()
       let registryStore = try registryStoreResult.get()
       let command = LaunchCommandFactory.makeCodexTurnrailLaunch(
         appURL: appURL,
-        engineURL: engineURL,
+        routerURL: routerURL,
         turnrailRootURL: registryStore.rootURL
       )
       let result = try commandExecutor.execute(

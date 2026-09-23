@@ -47,6 +47,7 @@ struct SettingsScreenshots {
     }
     let model = TurnrailViewModel(
       engineURLResult: .success(URL(filePath: "/unused-screenshot-engine")),
+      routerURLResult: .success(URL(filePath: "/unused-test-router")),
       registryStoreResult: .success(store),
       commandExecutor: CommandExecutor { _, _, _ in
         throw ScreenshotError.unexpectedOperation

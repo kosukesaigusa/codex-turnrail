@@ -21,7 +21,7 @@ struct AccountLoginExecutorTests {
         AccountAuthenticationCommand(
           executableURL: URL(filePath: "/bin/sh"),
           arguments: ["-c", script, "turnrail-login-test", pidFile.path],
-          environment: [:]
+          environment: [:], expectedEmail: nil
         ))
     }
     defer { task.cancel() }
@@ -66,7 +66,7 @@ struct AccountLoginExecutorTests {
           exit 7
           """,
         ],
-        environment: [:]
+        environment: [:], expectedEmail: nil
       ))
     #expect(result.exitCode == 7)
     #expect(result.standardOutput == String(repeating: "stdout-0123456789\n", count: 5000))
@@ -81,7 +81,7 @@ struct AccountLoginExecutorTests {
         AccountAuthenticationCommand(
           executableURL: URL(filePath: "/nonexistent-login-must-not-start"),
           arguments: [],
-          environment: [:]
+          environment: [:], expectedEmail: nil
         ))
     }
     do {
@@ -112,7 +112,7 @@ struct AccountLoginExecutorTests {
                 done
                 """,
               ],
-              environment: [:]
+              environment: [:], expectedEmail: nil
             ))
         }
       }

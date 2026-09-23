@@ -51,25 +51,8 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-  engine-inputs:
-    needs: validate
-    uses: ./.github/workflows/engine-inputs.yml
-    with:
-      source: ${{ needs.validate.outputs.sha }}
-
-  engine:
-    needs: engine-inputs
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/engine.yml
-    with:
-      source: ${{ needs.engine-inputs.outputs.source }}
-      identity: ${{ needs.engine-inputs.outputs.identity }}
-      key: ${{ needs.engine-inputs.outputs.key }}
-
   package:
-    needs: [validate, engine-inputs, engine]
+    needs: validate
     runs-on: macos-15
     timeout-minutes: 90
     environment: release
@@ -77,10 +60,6 @@ jobs:
       contents: write
       actions: read
     env:
-      CARGO_INCREMENTAL: "0"
-      CARGO_BUILD_JOBS: "2"
-      CODEX_REPO_ROOT: ${{ github.workspace }}/engine
-      ENGINE_IDENTITY: ${{ needs.engine-inputs.outputs.identity }}
       RELEASE_TAG: ${{ needs.validate.outputs.tag }}
       RELEASE_COMMIT: ${{ needs.validate.outputs.sha }}
     steps:
@@ -111,31 +90,11 @@ jobs:
             *) echo 'A Developer ID Application identity is required.' >&2; exit 1 ;;
           esac
           python3 scripts/release.py notary-preflight
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
-        with:
-          toolchain: "1.95.0"
       - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
         with:
-          tool: just@1.51.0,cargo-about@0.9.2
-      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.11.3"
-      - name: Restore the verified Engine before loading signing credentials
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: ${{ needs.engine.outputs.artifact_id }}
-          PRODUCER_RUN: ${{ needs.engine.outputs.producer_run }}
-        run: |
-          args=()
-          if [[ "$PRODUCER_RUN" == "$GITHUB_RUN_ID" ]]; then
-            args=(--current-run)
-          fi
-          python3 scripts/engine_artifacts.py restore "$ARTIFACT_ID" "$RUNNER_TEMP/verified-engine" "${args[@]}"
-      - name: Fetch and verify the pinned official CLI
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release.py download-cli "$RUNNER_TEMP/official-codex"
+          tool: just@1.51.0
+      - name: Fetch and verify the pinned official ChatGPT app
+        run: python3 scripts/official_app.py download "$RUNNER_TEMP/official/ChatGPT.app"
       - name: Import the signing certificate into an ephemeral keychain
         env:
           CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
@@ -172,8 +131,7 @@ jobs:
         env:
           SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
         run: |
-          scripts/build-app.sh "$RUNNER_TEMP/release" "$SIGNING_IDENTITY" "$RUNNER_TEMP/official-codex" release \
-            --ci --engine-evidence "$RUNNER_TEMP/verified-engine"
+          scripts/build-app.sh "$RUNNER_TEMP/release" "$SIGNING_IDENTITY" "$RUNNER_TEMP/official/ChatGPT.app" --ci
       - name: Notarize the app and verify its stapled ticket
         env:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
