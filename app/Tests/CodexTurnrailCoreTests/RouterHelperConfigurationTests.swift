@@ -4,6 +4,7 @@ import Testing
 @testable import CodexTurnrailCore
 
 struct RouterHelperConfigurationTests {
+  let appVersion = "99.1.12345"
   let router = URL(filePath: "/Applications/Turnrail.app/Contents/MacOS/CodexTurnrailRouter")
   let engine = URL(filePath: "/Applications/ChatGPT.app/Contents/Resources/codex")
 
@@ -24,7 +25,8 @@ struct RouterHelperConfigurationTests {
     ]
     let original: [String: Any] = ["mcpServers": ["cua_repl": server], "description": "Fixture"]
     try RouterJSON.writePrivate(RouterJSON.data(original), to: file)
-    try RouterHelperConfiguration.synchronizePlugin(home: home.url, router: router, engine: engine)
+    try RouterHelperConfiguration.synchronizePlugin(
+      home: home.url, router: router, engine: engine, appVersion: appVersion)
     var expectedServer = server
     var expectedEnvironment = try RouterJSON.map(server, "env")
     expectedEnvironment["CODEX_CLI_PATH"] = engine.path
@@ -36,7 +38,8 @@ struct RouterHelperConfigurationTests {
     #expect(try prepared == RouterJSON.data(expected))
     let modified = try file.resourceValues(forKeys: [.contentModificationDateKey])
       .contentModificationDate
-    try RouterHelperConfiguration.synchronizePlugin(home: home.url, router: router, engine: engine)
+    try RouterHelperConfiguration.synchronizePlugin(
+      home: home.url, router: router, engine: engine, appVersion: appVersion)
     #expect(try Data(contentsOf: file) == prepared)
     #expect(
       try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
@@ -47,7 +50,8 @@ struct RouterHelperConfigurationTests {
   func absentOrExplicitOtherPluginCLIIsNotChanged() throws {
     let home = try RouterTestDirectory()
     let file = pluginFile(home.url)
-    try RouterHelperConfiguration.synchronizePlugin(home: home.url, router: router, engine: engine)
+    try RouterHelperConfiguration.synchronizePlugin(
+      home: home.url, router: router, engine: engine, appVersion: appVersion)
     #expect(!FileManager.default.fileExists(atPath: file.path))
     try FileManager.default.createDirectory(
       at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -55,7 +59,7 @@ struct RouterHelperConfigurationTests {
       let original = try RouterJSON.data(["mcpServers": ["cua_repl": ["env": environment]]])
       try RouterJSON.writePrivate(original, to: file)
       try RouterHelperConfiguration.synchronizePlugin(
-        home: home.url, router: router, engine: engine)
+        home: home.url, router: router, engine: engine, appVersion: appVersion)
       #expect(try Data(contentsOf: file) == original)
     }
   }
@@ -74,7 +78,7 @@ struct RouterHelperConfigurationTests {
     try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
     #expect(throws: (any Error).self) {
       try RouterHelperConfiguration.synchronizePlugin(
-        home: home.url, router: router, engine: engine)
+        home: home.url, router: router, engine: engine, appVersion: appVersion)
     }
     #expect(try Data(contentsOf: target) == data)
   }
@@ -82,7 +86,7 @@ struct RouterHelperConfigurationTests {
   private func pluginFile(_ home: URL) -> URL {
     home.appending(
       path: "plugins/cache/openai-bundled/unified-computer-use/"
-        + CodexCompatibilityContract.supported.appVersion + "/.mcp.json")
+        + appVersion + "/.mcp.json")
   }
 
   @Test(arguments: ["thread/start", "thread/resume", "thread/fork"])

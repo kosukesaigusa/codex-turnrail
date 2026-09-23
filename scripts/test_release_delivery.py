@@ -119,6 +119,9 @@ class ReleaseDeliveryTests(unittest.TestCase):
         self.assertIn(self.commit, notes)
         self.assertIn("0.2.1 (28)", notes)
         self.assertIn("26.908.40834 (8881)", notes)
+        self.assertIn("ChatGPT release reference:", notes)
+        self.assertIn("Version matching is not required", notes)
+        self.assertNotIn("Requires the ChatGPT", notes)
         self.assertIn(delivery.PENDING, notes)
         self.assertNotIn(delivery.PASSED, notes)
 

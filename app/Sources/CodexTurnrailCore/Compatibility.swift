@@ -42,20 +42,39 @@ public struct CodexInstallation: Equatable, Sendable {
 public struct CompatibilityReport: Equatable, Sendable {
   public let installed: CodexInstallation
   public let engineVersion: String
-  public let mismatches: [String]
+  public let reference: CodexCompatibilityContract
 
-  public var isCompatible: Bool {
-    mismatches.isEmpty
+  public var matchesReference: Bool {
+    launchIssues.isEmpty
+      && installed.appVersion == reference.appVersion
+      && installed.appBuild == reference.appBuild
+      && installed.cliVersion == reference.cliVersion
+  }
+
+  /// Version differences are informational; identity and bundle consistency remain required.
+  public var launchIssues: [String] {
+    var issues: [String] = []
+    if installed.bundleIdentifier != reference.bundleIdentifier {
+      issues.append("The installed app is not the official ChatGPT app.")
+    }
+    if engineVersion != installed.cliVersion {
+      issues.append("The selected Engine does not match the Engine bundled with ChatGPT.")
+    }
+    return issues
+  }
+
+  public var canLaunch: Bool {
+    launchIssues.isEmpty
   }
 
   public init(
     installed: CodexInstallation,
     engineVersion: String,
-    mismatches: [String]
+    reference: CodexCompatibilityContract = .reference
   ) {
     self.installed = installed
     self.engineVersion = engineVersion
-    self.mismatches = mismatches
+    self.reference = reference
   }
 }
 
@@ -91,7 +110,7 @@ public struct CompatibilityProbe {
   private let fileManager: FileManager
 
   public init(
-    contract: CodexCompatibilityContract = .supported,
+    contract: CodexCompatibilityContract = .reference,
     commandExecutor: CommandExecutor = .live,
     fileManager: FileManager = .default
   ) {
@@ -110,11 +129,7 @@ public struct CompatibilityProbe {
     return CompatibilityReport(
       installed: installed,
       engineVersion: engineVersion,
-      mismatches: CompatibilityEvaluator.evaluate(
-        contract: contract,
-        installed: installed,
-        engineVersion: engineVersion
-      )
+      reference: contract
     )
   }
 
@@ -193,39 +208,5 @@ public struct CompatibilityProbe {
     }
 
     return result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-}
-
-public enum CompatibilityEvaluator {
-  public static func evaluate(
-    contract: CodexCompatibilityContract,
-    installed: CodexInstallation,
-    engineVersion: String
-  ) -> [String] {
-    var mismatches: [String] = []
-
-    if installed.bundleIdentifier != contract.bundleIdentifier {
-      mismatches.append(
-        "Bundle identifier \(installed.bundleIdentifier) is not supported."
-      )
-    }
-    if installed.appVersion != contract.appVersion {
-      mismatches.append("App version \(installed.appVersion) is not supported.")
-    }
-    if installed.appBuild != contract.appBuild {
-      mismatches.append("App build \(installed.appBuild) is not supported.")
-    }
-    if installed.cliVersion != contract.cliVersion {
-      mismatches.append(
-        "Bundled CLI \(installed.cliVersion) does not match \(contract.cliVersion)."
-      )
-    }
-    if engineVersion != contract.cliVersion {
-      mismatches.append(
-        "ChatGPT Engine \(engineVersion) does not match \(contract.cliVersion)."
-      )
-    }
-
-    return mismatches
   }
 }

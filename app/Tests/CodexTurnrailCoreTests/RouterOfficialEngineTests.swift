@@ -42,7 +42,7 @@ struct RouterOfficialEngineTests {
       ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
     let routerPath = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
     let app = URL(filePath: appPath)
-    try OfficialEngineInstallation.verify(app: app)
+    let installed = try OfficialEngineInstallation.verify(app: app)
     let engine = app.appending(path: "Contents/Resources/codex")
     let root = try RouterTestDirectory()
     let helper: [String: Any] = ["env": ["CODEX_CLI_PATH": routerPath]]
@@ -50,12 +50,13 @@ struct RouterOfficialEngineTests {
     if source == "plugin" {
       let file = root.url.appending(
         path: "plugins/cache/openai-bundled/unified-computer-use/"
-          + CodexCompatibilityContract.supported.appVersion + "/.mcp.json")
+          + installed.appVersion + "/.mcp.json")
       try FileManager.default.createDirectory(
         at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
       try RouterJSON.writePrivate(RouterJSON.data(["mcpServers": ["cua_repl": helper]]), to: file)
       try RouterHelperConfiguration.synchronizePlugin(
-        home: root.url, router: URL(filePath: routerPath), engine: engine)
+        home: root.url, router: URL(filePath: routerPath), engine: engine,
+        appVersion: installed.appVersion)
       prepared = try RouterJSON.map(
         RouterJSON.map(RouterJSON.object(Data(contentsOf: file)), "mcpServers"), "cua_repl")
     } else {

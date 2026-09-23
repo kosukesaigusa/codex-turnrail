@@ -120,7 +120,7 @@ struct OnboardingTests {
     defer { fixture.remove() }
     let model = fixture.model(login: .immediateSuccess, identity: fixture.identityReader)
     let check = model.refreshCompatibility()
-    #expect(check.title == "Compatible")
+    #expect(check.title == "ChatGPT Version")
     #expect(model.primaryAction == .addAccount)
     #expect(!model.canLaunch)
     let login = try #require(model.addAccount())
@@ -133,6 +133,47 @@ struct OnboardingTests {
     #expect(model.canLaunch)
     model.setAccountAllowed(id: account.id, allowed: false, scope: .defaultRule)
     #expect(model.primaryAction == .assignAccount)
+  }
+
+  @Test
+  func aDifferentVersionAllowsSetupAndLaunchAndKeepsItsVersionStatus() async throws {
+    let fixture = try OnboardingFixture()
+    defer { fixture.remove() }
+    let reference = CodexCompatibilityContract.reference
+    let installed = CodexInstallation(
+      bundleIdentifier: reference.bundleIdentifier, appVersion: "99.1", appBuild: "99999",
+      cliVersion: "codex-cli 99.1.0")
+    let report = CompatibilityReport(installed: installed, engineVersion: installed.cliVersion)
+    let launches = LogoutCalls()
+    let model = TurnrailViewModel(
+      engineURLResult: .success(URL(filePath: "/unused-test-engine")),
+      routerURLResult: .success(URL(filePath: "/unused-test-router")),
+      registryStoreResult: .success(fixture.store),
+      commandExecutor: CommandExecutor { executable, arguments, _ in
+        #expect(executable.path == "/usr/bin/open")
+        #expect(arguments.contains("CODEX_CLI_PATH=/unused-test-router"))
+        launches.record(executable.path)
+        return CommandResult(exitCode: 0, standardOutput: "", standardError: "")
+      },
+      loginExecutor: .immediateSuccess,
+      compatibilityProbe: { _, _ in report },
+      isApplicationRunning: { false },
+      identityReader: fixture.identityReader,
+      usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: [], resetCredits: nil) })
+    model.refreshCompatibility()
+    #expect(model.statusNotice == nil)
+    #expect(model.compatibilityReport?.matchesReference == false)
+    #expect(model.primaryAction == .addAccount)
+    let login = try #require(model.addAccount())
+    await login.value
+    let account = try #require(model.registryState.accounts.first)
+    model.setAccountAllowed(id: account.id, allowed: true, scope: .defaultRule)
+    #expect(model.canLaunch)
+    model.launchCodex()
+    #expect(launches.homes == ["/usr/bin/open"])
+    #expect(model.state == .launched(report))
+    #expect(model.statusText == "Running")
+    #expect(model.compatibilityReport?.matchesReference == false)
   }
 
   @Test
@@ -175,7 +216,7 @@ struct OnboardingTests {
         return CommandResult(exitCode: 1, standardOutput: "", standardError: "Not allowed")
       },
       loginExecutor: .immediateSuccess,
-      compatibilityProbe: { _, _ in supportedCompatibilityReport() },
+      compatibilityProbe: { _, _ in referenceCompatibilityReport() },
       isApplicationRunning: { true },
       identityReader: fixture.identityReader,
       usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: [], resetCredits: nil) }
@@ -210,8 +251,8 @@ struct OnboardingTests {
   }
 }
 
-func supportedCompatibilityReport() -> CompatibilityReport {
-  let contract = CodexCompatibilityContract.supported
+func referenceCompatibilityReport() -> CompatibilityReport {
+  let contract = CodexCompatibilityContract.reference
   return CompatibilityReport(
     installed: CodexInstallation(
       bundleIdentifier: contract.bundleIdentifier,
@@ -219,8 +260,7 @@ func supportedCompatibilityReport() -> CompatibilityReport {
       appBuild: contract.appBuild,
       cliVersion: contract.cliVersion
     ),
-    engineVersion: contract.cliVersion,
-    mismatches: []
+    engineVersion: contract.cliVersion
   )
 }
 
@@ -261,7 +301,7 @@ private struct OnboardingFixture {
         return CommandResult(exitCode: 0, standardOutput: "", standardError: "")
       },
       loginExecutor: login,
-      compatibilityProbe: { _, _ in supportedCompatibilityReport() },
+      compatibilityProbe: { _, _ in referenceCompatibilityReport() },
       isApplicationRunning: { false },
       identityReader: identity,
       usageReader: AccountUsageReader { _, _ in AccountRateLimits(buckets: [], resetCredits: nil) }

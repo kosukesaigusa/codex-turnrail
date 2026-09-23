@@ -10,11 +10,13 @@ This is an independent project with no affiliation with or endorsement from Open
 
 ## Install
 
-Requires an Apple silicon Mac running macOS 14 or later and the [supported ChatGPT macOS app](upstream.toml) installed at `/Applications/ChatGPT.app`. The ChatGPT app version and build must match exactly.
+Requires an Apple silicon Mac running macOS 14 or later and the official ChatGPT macOS app installed at `/Applications/ChatGPT.app`. Use the latest versions of ChatGPT and Turnrail available to you. Each Turnrail release lists its reference ChatGPT version; other versions can also be used, without a guarantee that every feature will work.
+
+The indicator at the bottom of Settings is green when your ChatGPT version matches the release reference and yellow when it differs. Click it for version details and **See releases**. A version difference does not prevent launch.
 
 1. [Download Codex Turnrail for macOS (Apple silicon)](https://github.com/kosukesaigusa/codex-turnrail/releases/download/v0.7.0/Codex-Turnrail-v0.7.0-macos-arm64.zip).
 2. Double-click the ZIP, then drag `Codex Turnrail.app` into **Applications**.
-3. Quit ChatGPT if it is running, open **Codex Turnrail**, and select **Check Compatibility**.
+3. Quit ChatGPT if it is running, open **Codex Turnrail**, and click the version indicator near the bottom of the sidebar for details.
 
 Only the app ZIP is needed. No Terminal commands are required.
 
@@ -46,7 +48,7 @@ Removing an account deletes its Turnrail credentials and account settings. Share
 
 ## Development
 
-The Swift app and local account router live in `app/`. Turnrail runs the signed Engine and Code Mode Host already included in the supported ChatGPT installation, without modifying or redistributing those executables. The source tree in `engine/` is retained for protocol reference and provenance. Use the root `justfile` for builds and checks.
+The Swift app and local account router live in `app/`. Turnrail runs the signed Engine and Code Mode Host already included in the installed ChatGPT app, without modifying or redistributing those executables. The source tree in `engine/` is retained for protocol reference and provenance. Use the root `justfile` for builds and checks.
 
 See [Development](docs/development.md) to build from source and [Verification](docs/verification.md) for validation results and remaining checks.
 

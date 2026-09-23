@@ -12,10 +12,10 @@ enum RouterHelperConfiguration {
   ///
   /// Correct only our own CLI override before the official Engine loads the plugin.
   /// The plugin's transport, surfaces, approval policy, and other environment stay intact.
-  static func synchronizePlugin(home: URL, router: URL, engine: URL) throws {
+  static func synchronizePlugin(home: URL, router: URL, engine: URL, appVersion: String) throws {
     let file = home.appending(
       path: "plugins/cache/openai-bundled/unified-computer-use/"
-        + CodexCompatibilityContract.supported.appVersion + "/.mcp.json")
+        + appVersion + "/.mcp.json")
     guard FileManager.default.fileExists(atPath: file.path) else { return }
     let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
     guard attributes[.type] as? FileAttributeType == .typeRegular,

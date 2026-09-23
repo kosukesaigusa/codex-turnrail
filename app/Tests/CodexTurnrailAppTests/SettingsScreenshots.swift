@@ -45,6 +45,7 @@ struct SettingsScreenshots {
       ])
       try data.write(to: home.deletingLastPathComponent().appending(path: "last-used.json"))
     }
+    var versionReport = referenceCompatibilityReport()
     let model = TurnrailViewModel(
       engineURLResult: .success(URL(filePath: "/unused-screenshot-engine")),
       routerURLResult: .success(URL(filePath: "/unused-test-router")),
@@ -53,7 +54,7 @@ struct SettingsScreenshots {
         throw ScreenshotError.unexpectedOperation
       },
       loginExecutor: AccountLoginExecutor { _ in throw ScreenshotError.unexpectedOperation },
-      compatibilityProbe: { _, _ in supportedCompatibilityReport() },
+      compatibilityProbe: { _, _ in versionReport },
       isApplicationRunning: { false },
       identityReader: AccountIdentityReader { _, home in
         let account = try #require(
@@ -93,6 +94,16 @@ struct SettingsScreenshots {
     try render(
       AccountResetCreditsSheet(account: accounts[1], model: model),
       size: NSSize(width: 460, height: 340), to: output.appending(path: "available-resets.png"))
+    let reference = CodexCompatibilityContract.reference
+    let installed = CodexInstallation(
+      bundleIdentifier: reference.bundleIdentifier, appVersion: "26.914.12345", appBuild: "9800",
+      cliVersion: "codex-cli 0.155.0-alpha.8")
+    versionReport = CompatibilityReport(installed: installed, engineVersion: installed.cliVersion)
+    model.refreshCompatibility()
+    try render(
+      TurnrailSettings(model: model, page: .switchAccount),
+      size: NSSize(width: 1120, height: 740),
+      to: output.appending(path: "switch-version-differs.png"))
   }
 
   private func render(_ content: some View, size: NSSize, to url: URL) throws {

@@ -8,7 +8,7 @@ struct StatusNotice: Equatable, Identifiable {
 
     var title: String {
       switch self {
-      case .releases: "View Releases"
+      case .releases: "See releases"
       case .installation: "Installation Guide"
       }
     }
@@ -30,45 +30,34 @@ struct StatusNotice: Equatable, Identifiable {
   var id: String { "\(title):\(message)" }
 
   static func compatibility(_ report: CompatibilityReport) -> Self {
-    if report.isCompatible {
-      return Self(
-        title: "Compatible",
-        message: "This version of the ChatGPT app is supported.",
-        recovery: nil
-      )
-    }
-    let contract = CodexCompatibilityContract.supported
-    if report.engineVersion != contract.cliVersion {
-      return Self(
-        title: "Reinstall Turnrail",
-        message: "Reinstall Codex Turnrail from its release archive.\n\n"
-          + report.mismatches.joined(separator: "\n"),
-        recovery: .releases
-      )
-    }
+    let contract = report.reference
     if report.installed.bundleIdentifier != contract.bundleIdentifier {
       return Self(
         title: "Unsupported ChatGPT App",
-        message: "Install the supported ChatGPT app at /Applications/ChatGPT.app.",
+        message: "Install the official ChatGPT app at /Applications/ChatGPT.app.",
         recovery: .installation
       )
     }
-    if report.installed.appVersion == contract.appVersion,
-      report.installed.appBuild == contract.appBuild,
-      report.installed.cliVersion != contract.cliVersion
-    {
+    if !report.canLaunch {
       return Self(
         title: "Reinstall ChatGPT",
         message:
-          "The ChatGPT app contains an unsupported Codex CLI. Reinstall the supported ChatGPT app.",
+          report.launchIssues.joined(separator: "\n"),
         recovery: .installation
       )
     }
+    let explanation =
+      report.matchesReference
+      ? "Your ChatGPT version matches the reference for this Turnrail release."
+      : "Your ChatGPT version differs from the reference for this Turnrail release. "
+        + "You can still use Turnrail, but some features may behave differently."
     return Self(
-      title: "Unsupported ChatGPT Version",
+      title: "ChatGPT Version",
       message: "Installed: \(report.installed.appVersion) (\(report.installed.appBuild))\n"
-        + "Supported: \(contract.appVersion) (\(contract.appBuild))\n\n"
-        + "Check the Turnrail releases for support for your ChatGPT app version.",
+        + "Engine: \(report.installed.cliVersion)\n\n"
+        + "Release reference: \(contract.appVersion) (\(contract.appBuild))\n"
+        + "Engine: \(contract.cliVersion)\n\n"
+        + explanation,
       recovery: .releases
     )
   }
@@ -79,21 +68,14 @@ struct StatusNotice: Equatable, Identifiable {
       case .appBundleMissing:
         return Self(
           title: "ChatGPT Not Found",
-          message: "Install the supported ChatGPT app at /Applications/ChatGPT.app.",
+          message: "Install the official ChatGPT app at /Applications/ChatGPT.app.",
           recovery: .installation
         )
-      case .infoPlistMissing, .invalidInfoPlist, .bundledCLIUnavailable:
+      case .infoPlistMissing, .invalidInfoPlist, .bundledCLIUnavailable, .engineUnavailable:
         return Self(
           title: "Reinstall ChatGPT",
-          message: "Reinstall the supported ChatGPT app.\n\n" + error.localizedDescription,
+          message: "Reinstall the official ChatGPT app.\n\n" + error.localizedDescription,
           recovery: .installation
-        )
-      case .engineUnavailable:
-        return Self(
-          title: "Reinstall Turnrail",
-          message: "Reinstall Codex Turnrail from its release archive.\n\n"
-            + error.localizedDescription,
-          recovery: .releases
         )
       case .commandFailed:
         break
