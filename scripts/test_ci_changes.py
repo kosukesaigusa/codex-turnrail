@@ -97,6 +97,13 @@ class CiChangesTests(unittest.TestCase):
             ("packaging/resources/AppIcon.icns", "scripts/build-app.sh"),
             {"tooling", "app"},
         )
+        for path in (
+            "scripts/official_app.py",
+            "scripts/product_evidence.py",
+            "scripts/verify_official_runtime.py",
+        ):
+            with self.subTest(path=path):
+                self.plan((path,), {"tooling", "app"})
 
     def test_engine_and_build_contract_changes_require_engine_checks(self):
         for path in (

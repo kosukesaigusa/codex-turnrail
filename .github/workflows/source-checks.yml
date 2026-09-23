@@ -115,12 +115,30 @@ jobs:
         timeout-minutes: 5
         run: swift test --package-path app --jobs 2 --verbose
 
+      - name: Fetch the pinned official ChatGPT app for routing verification
+        if: ${{ inputs.app }}
+        run: python3 scripts/official_app.py download "$RUNNER_TEMP/official/ChatGPT.app"
+
+      - name: Verify routing with official Code Mode and approvals
+        if: ${{ inputs.app }}
+        run: |
+          python3 scripts/verify_official_runtime.py "$RUNNER_TEMP/official/ChatGPT.app" \
+            "$GITHUB_WORKSPACE/app/.build/release/CodexTurnrailRouter" "$RUNNER_TEMP/runtime-verification.json" --ci
+
+      - name: Retain runtime verification
+        if: ${{ inputs.app }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: official-engine-routing
+          path: ${{ runner.temp }}/runtime-verification.json
+          if-no-files-found: error
+
       - name: Check packaging scripts and metadata
         if: ${{ inputs.tooling || inputs.app }}
         run: |
           zsh -n scripts/build-app.sh
           zsh -n scripts/verify-protocol-compatibility.sh
-          plutil -lint packaging/Info.plist packaging/entitlements/codex-code-mode-host.entitlements
+          plutil -lint packaging/Info.plist
 
       - name: Check for a clean worktree
         if: ${{ always() && !cancelled() }}

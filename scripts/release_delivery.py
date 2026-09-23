@@ -11,7 +11,8 @@ import tempfile
 from pathlib import Path
 
 from github_api import github
-from runtime_evidence import sha256, verify_report
+from product_evidence import verify_report
+from runtime_evidence import sha256
 
 PENDING = "Uploaded ZIP verification: pending."
 PASSED = (

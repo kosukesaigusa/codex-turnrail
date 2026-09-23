@@ -18,6 +18,9 @@ APP_INPUTS = (
     "scripts/build_notices.py",
     "scripts/project_metadata.py",
     "scripts/dev.py",
+    "scripts/official_app.py",
+    "scripts/product_evidence.py",
+    "scripts/verify_official_runtime.py",
     ".github/workflows/source-checks.yml",
 )
 LINT_FILES = {".codespellrc", ".gitignore", ".markdownlint-cli2.jsonc"}

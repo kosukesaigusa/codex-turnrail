@@ -18,8 +18,7 @@ class BuildAppTests(unittest.TestCase):
                     str(REPOSITORY / "scripts/build-app.sh"),
                     str(Path(temporary) / "output"),
                     "fixture identity",
-                    "/fixture/official-codex",
-                    "release",
+                    "/fixture/ChatGPT.app",
                     "--ci",
                 ],
                 env={**os.environ, "GITHUB_ACTIONS": "false"},
@@ -30,13 +29,10 @@ class BuildAppTests(unittest.TestCase):
             self.assertIn("--ci requires a GitHub Actions runner", result.stderr)
             self.assertFalse((Path(temporary) / "output").exists())
 
-    def test_reused_engine_requires_ci_release_and_an_explicit_absolute_directory(self):
-        for profile, directory in (
-            ("dev-small", "/verified/engine"),
-            ("release", "relative"),
-        ):
+    def test_official_app_and_output_require_absolute_paths(self):
+        for relative_argument in ("output", "app"):
             with (
-                self.subTest(profile=profile, directory=directory),
+                self.subTest(relative_argument=relative_argument),
                 tempfile.TemporaryDirectory() as temporary,
             ):
                 output = Path(temporary) / "output"
@@ -44,20 +40,21 @@ class BuildAppTests(unittest.TestCase):
                     [
                         "zsh",
                         str(REPOSITORY / "scripts/build-app.sh"),
-                        str(output),
+                        "relative-output"
+                        if relative_argument == "output"
+                        else str(output),
                         "fixture identity",
-                        "/fixture/official-codex",
-                        profile,
-                        "--ci",
-                        "--engine-evidence",
-                        directory,
+                        "relative.app"
+                        if relative_argument == "app"
+                        else "/fixture/ChatGPT.app",
                     ],
-                    env={**os.environ, "GITHUB_ACTIONS": "true"},
                     capture_output=True,
                     text=True,
                 )
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Engine evidence requires", result.stderr)
+                self.assertIn(
+                    "Output and official app paths must be absolute", result.stderr
+                )
                 self.assertFalse(output.exists())
 
     def test_output_in_build_directory_is_rejected_before_building(self):
@@ -72,10 +69,9 @@ class BuildAppTests(unittest.TestCase):
                 with self.subTest(output=output, script=script):
                     arguments = [str(output)]
                     if script == "build-app.sh":
-                        arguments.extend(
-                            ["fixture identity", "/fixture/official-codex"]
-                        )
-                    arguments.append("dev-small")
+                        arguments.extend(["fixture identity", "/fixture/ChatGPT.app"])
+                    else:
+                        arguments.append("dev-small")
                     result = subprocess.run(
                         [*command, str(REPOSITORY / "scripts" / script), *arguments],
                         capture_output=True,

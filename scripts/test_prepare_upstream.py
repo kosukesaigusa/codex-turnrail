@@ -47,7 +47,7 @@ class CandidateTests(unittest.TestCase):
         with (
             patch.object(prepare, "download_app_file", side_effect=archive),
             patch.object(prepare.subprocess, "run") as sign,
-            self.assertRaisesRegex(ValueError, "Unsafe path"),
+            self.assertRaisesRegex(ValueError, "Unsafe.*path"),
         ):
             prepare.inspect_app(self.candidate, self.root)
         sign.assert_not_called()
@@ -94,7 +94,13 @@ class CandidateTests(unittest.TestCase):
                 "CFBundleVersion": self.candidate["build"],
             }
         )
-        archive = self.archive({"ChatGPT.app/Contents/Info.plist": plist})
+        archive = self.archive(
+            {
+                "ChatGPT.app/Contents/Info.plist": plist,
+                "ChatGPT.app/Contents/Resources/codex": b"fixture",
+                "ChatGPT.app/Contents/Resources/codex-code-mode-host": b"fixture-host",
+            }
+        )
         with (
             patch.object(prepare, "download_app_file", side_effect=archive),
             patch.object(prepare.subprocess, "run") as signature,
@@ -106,20 +112,9 @@ class CandidateTests(unittest.TestCase):
         ):
             self.assertEqual(
                 prepare.inspect_app(self.candidate, self.root),
-                "rust-v0.154.0-alpha.6.2",
+                "codex-cli 0.154.0-alpha.6.2",
             )
-        signature.assert_called_once()
-
-    def test_unpublished_source_stops_before_the_engine_merge(self):
-        with (
-            patch.object(
-                prepare, "source_release", side_effect=ValueError("No matching release")
-            ),
-            patch.object(prepare, "update") as merge,
-            self.assertRaisesRegex(ValueError, "No matching release"),
-        ):
-            prepare.prepare(self.root, self.candidate, "rust-v0.154.0-alpha.6.2")
-        merge.assert_not_called()
+        self.assertEqual(signature.call_count, 3)
 
     def test_candidate_includes_next_minor_and_build_with_generated_version(self):
         from project_metadata import (
@@ -128,6 +123,7 @@ class CandidateTests(unittest.TestCase):
             metadata_bytes,
             product_version,
             product_version_swift,
+            read_upstream,
         )
 
         metadata = {
@@ -140,16 +136,22 @@ class CandidateTests(unittest.TestCase):
                 "bundle_identifier": "com.openai.codex",
                 "version": "26.900.1",
                 "build": "1",
+                "cli_version": "codex-cli 0.154.0",
             },
         }
         (self.root / "upstream.toml").write_bytes(metadata_bytes(metadata))
         for path in (GENERATED, VERSION_GENERATED):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
-        with (
-            patch.object(prepare, "source_release"),
-            patch.object(prepare, "update", return_value="a" * 40),
+        # A bundled CLI with no matching public source is still a valid candidate.
+        # There is no reference Engine tree in this fixture and no network is allowed.
+        with patch.object(
+            prepare, "github", side_effect=AssertionError("Unexpected source lookup")
         ):
-            prepare.prepare(self.root, self.candidate, "rust-v0.154.0")
+            prepare.prepare(self.root, self.candidate, "codex-cli 0.999.0-alpha.7")
+        updated = read_upstream(self.root)
+        self.assertEqual(updated["codex"], metadata["codex"])
+        self.assertEqual(updated["app"]["cli_version"], "codex-cli 0.999.0-alpha.7")
+        self.assertFalse((self.root / "engine").exists())
         self.assertEqual(product_version(self.root), ("0.8.0", "35"))
         self.assertEqual(
             (self.root / VERSION_GENERATED).read_text(), product_version_swift("0.8.0")
@@ -174,8 +176,7 @@ class CandidateTests(unittest.TestCase):
                 "owner/repo",
                 "upstream/codex-app-8881",
                 self.candidate,
-                "rust-v0.154.0",
-                "a" * 40,
+                "codex-cli 0.154.0",
             )
         staged = next(
             call.args[0]
@@ -184,6 +185,7 @@ class CandidateTests(unittest.TestCase):
         )
         self.assertIn("packaging/Info.plist", staged)
         self.assertIn(str(prepare.VERSION_GENERATED), staged)
+        self.assertNotIn("engine", staged)
         self.assertFalse(calls[0][1]["draft"])
         self.assertEqual(
             calls[1][1], {"ref": "upstream/codex-app-8881", "inputs": {"scope": "auto"}}
@@ -199,8 +201,7 @@ class CandidateTests(unittest.TestCase):
                 "owner/repo",
                 "upstream/codex-app-8881",
                 self.candidate,
-                "rust-v0.154.0",
-                "a" * 40,
+                "codex-cli 0.154.0",
             )
         write.assert_not_called()
         read.assert_not_called()

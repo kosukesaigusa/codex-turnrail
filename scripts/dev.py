@@ -166,12 +166,13 @@ def finish():
             "Cleanup paths must be independent directories, not symlinks."
         )
     environment = cargo_environment(os.environ)
-    subprocess.run(
-        ["cargo", "clean", "--target-dir", str(TARGET)],
-        cwd=RUST_ROOT,
-        env=environment,
-        check=True,
-    )
+    if TARGET.exists():
+        subprocess.run(
+            ["cargo", "clean", "--target-dir", str(TARGET)],
+            cwd=RUST_ROOT,
+            env=environment,
+            check=True,
+        )
     subprocess.run(
         ["swift", "package", "--package-path", str(APP_ROOT), "clean"], check=True
     )

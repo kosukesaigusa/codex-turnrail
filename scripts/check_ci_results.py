@@ -7,8 +7,6 @@ import os
 REQUIRED = {"changes", "checks", "spelling", "blob-size"}
 CONDITIONAL = {
     "dependencies": "dependencies_required",
-    "engine-inputs": "engine_required",
-    "engine": "engine_required",
 }
 OUTPUTS = {
     "tooling_required",

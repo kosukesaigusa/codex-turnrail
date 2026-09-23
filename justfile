@@ -46,13 +46,13 @@ lint-workflows:
 lint-docs:
     pnpm dlx markdownlint-cli2@0.23.2 --config .markdownlint-cli2.jsonc
 
-# Verify an assembled runtime using a local mock model.
-test-integration runtime report:
-    uv run --frozen --project "{{ root }}/engine/scripts/codex_package/smoke_tests" python "{{ root }}/tests/integration/verify_runtime.py" "$1" "$2"
+# Verify the native router with the signed official Engine and a local mock model.
+test-integration official_app router report:
+    python3 "{{ root }}/scripts/verify_official_runtime.py" "$1" "$2" "$3"
 
 # Build, sign, and verify the complete app, then clean generated build artifacts.
-package output identity official_cli profile:
-    "{{ root }}/scripts/build-app.sh" "$1" "$2" "$3" "$4"
+package output identity official_app:
+    "{{ root }}/scripts/build-app.sh" "$1" "$2" "$3"
 
 metadata-check:
     python3 "{{ root }}/scripts/project_metadata.py"

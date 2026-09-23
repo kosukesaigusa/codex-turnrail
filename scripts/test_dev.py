@@ -209,6 +209,7 @@ class StoragePolicyTests(unittest.TestCase):
         self.process.assert_not_called()
 
     def test_finish_is_not_blocked_by_low_space(self):
+        self.target.mkdir()
         self.space.return_value.free = 0
         self.assertEqual(self.invoke("finish"), 0)
         self.assertEqual(

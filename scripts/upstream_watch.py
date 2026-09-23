@@ -14,7 +14,6 @@ from github_api import github
 from project_metadata import (
     ROOT,
     VERSION,
-    codex_version,
     read_upstream,
     version_tuple,
 )
@@ -70,14 +69,6 @@ def fetch_appcast():
         )
         data = destination.read_bytes()
     return parse_appcast(data)
-
-
-def source_release(tag):
-    codex_version(tag)
-    release = github(f"repos/openai/codex/releases/tags/{tag}")
-    if release["draft"] is not False or release["tag_name"] != tag:
-        raise ValueError("The candidate CLI has no matching public source release.")
-    return release
 
 
 def parse_appcast(data):
@@ -149,7 +140,7 @@ def report_body(observation):
         "",
         f"Supported ChatGPT app: {supported['app']['version']} "
         f"({supported['app']['build']}).",
-        f"Engine base: {supported['codex']['tag']}.",
+        f"Bundled official Engine: {supported['app']['cli_version']}.",
         "",
     ]
     pending = bool(observation["errors"])
@@ -173,8 +164,9 @@ def report_body(observation):
         lines.extend(
             [
                 "",
-                "An app candidate must pass signature inspection and expose a matching",
-                "public CLI source release before an update PR is prepared.",
+                "An app candidate must pass OpenAI signature and identity inspection",
+                "before a compatibility update PR is prepared. The PR runs routing",
+                "verification with its official Engine. No CLI source is required.",
                 "Official UI verification is required before release.",
             ]
         )

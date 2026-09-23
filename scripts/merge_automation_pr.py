@@ -16,6 +16,7 @@ from project_metadata import (
     VERSION_GENERATED,
     product_version_swift,
     supported_swift,
+    validate_upstream,
     version_tuple,
 )
 from update_release_readme import dispatch_ci, published_url, update_text
@@ -77,7 +78,7 @@ def check_contents(repository, pr, main, files):
         str(GENERATED),
         str(VERSION_GENERATED),
     }
-    if not paths <= allowed | {path for path in paths if path.startswith("engine/")}:
+    if paths != allowed:
         raise ValueError("Upstream candidate changes automation or unrelated files.")
     before = plistlib.loads(read_file(repository, main, "packaging/Info.plist"))
     after = plistlib.loads(read_file(repository, head, "packaging/Info.plist"))
@@ -98,12 +99,17 @@ def check_contents(repository, pr, main, files):
         repository, head, str(VERSION_GENERATED)
     ).decode() != product_version_swift(version):
         raise ValueError("The generated product version does not match the candidate.")
-    metadata = tomllib.loads(read_file(repository, head, "upstream.toml").decode())
-    old = tomllib.loads(read_file(repository, main, "upstream.toml").decode())
+    metadata = validate_upstream(
+        tomllib.loads(read_file(repository, head, "upstream.toml").decode())
+    )
+    old = validate_upstream(
+        tomllib.loads(read_file(repository, main, "upstream.toml").decode())
+    )
     if (
         metadata["app"]["build"] != branch.removeprefix("upstream/codex-app-")
         or int(metadata["app"]["build"]) <= int(old["app"]["build"])
         or metadata["codex"]["repository"] != "https://github.com/openai/codex.git"
+        or metadata["codex"] != old["codex"]
         or metadata["app"]["bundle_identifier"] != "com.openai.codex"
     ):
         raise ValueError("Candidate must advance the official ChatGPT build.")
@@ -201,7 +207,7 @@ def merge(repository, run_id):
     result = github(
         f"repos/{repository}/pulls/{pr['number']}/merge",
         method="PUT",
-        payload={"merge_method": "squash", "sha": run["head_sha"]},
+        payload={"merge_method": "merge", "sha": run["head_sha"]},
     )
     if result["merged"] is not True:
         raise ValueError("GitHub did not merge the verified candidate.")

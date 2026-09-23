@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import merge_automation_pr as auto
+import tomllib
 from project_metadata import metadata_bytes
 
 
@@ -41,7 +42,7 @@ class AutomationMergeTests(unittest.TestCase):
             },
             "base": {"ref": "main", "repo": {"full_name": self.repo}},
             "commits": 1,
-            "changed_files": 5,
+            "changed_files": 4,
         }
         self.commits = [{"author": {"login": auto.BOT}}]
         self.files = [
@@ -51,7 +52,6 @@ class AutomationMergeTests(unittest.TestCase):
                 "packaging/Info.plist",
                 str(auto.GENERATED),
                 str(auto.VERSION_GENERATED),
-                "engine/codex-rs/Cargo.lock",
             )
         ]
         before = {
@@ -74,6 +74,7 @@ class AutomationMergeTests(unittest.TestCase):
                 "bundle_identifier": "com.openai.codex",
                 "version": "26.900.1",
                 "build": "99",
+                "cli_version": "codex-cli 0.155.0",
             },
         }
         new = {**old, "app": {**old["app"], "version": "26.900.2", "build": "100"}}
@@ -147,7 +148,7 @@ class AutomationMergeTests(unittest.TestCase):
                 (
                     "repos/fixture/product/pulls/8/merge",
                     "PUT",
-                    {"merge_method": "squash", "sha": self.head},
+                    {"merge_method": "merge", "sha": self.head},
                 )
             ],
         )
@@ -232,10 +233,42 @@ class AutomationMergeTests(unittest.TestCase):
             self.merge()
         self.commits.pop()
         self.pr["commits"] = 1
-        self.files[4]["filename"] = ".github/workflows/ci.yml"
+        self.files.append(
+            {"filename": ".github/workflows/ci.yml", "status": "modified"}
+        )
+        self.pr["changed_files"] = len(self.files)
         with self.assertRaisesRegex(ValueError, "unrelated files"):
             self.merge()
         self.assertEqual(self.writes, [])
+
+    def test_reference_engine_changes_are_not_eligible_for_auto_merge(self):
+        self.files.append(
+            {"filename": "engine/codex-rs/core/src/lib.rs", "status": "modified"}
+        )
+        self.pr["changed_files"] = len(self.files)
+        with self.assertRaisesRegex(ValueError, "unrelated files"):
+            self.merge()
+        self.assertEqual(self.writes, [])
+
+    def test_reference_source_pin_cannot_change_in_a_compatibility_candidate(self):
+        key = (self.head, "upstream.toml")
+        changed = tomllib.loads(self.contents[key].decode())
+        changed["codex"]["commit"] = "e" * 40
+        self.contents[key] = metadata_bytes(changed)
+        with self.assertRaisesRegex(ValueError, "official ChatGPT build"):
+            self.merge()
+        self.assertEqual(self.writes, [])
+
+    def test_new_bundled_cli_can_merge_without_a_reference_source_update(self):
+        key = (self.head, "upstream.toml")
+        changed = tomllib.loads(self.contents[key].decode())
+        changed["app"]["cli_version"] = "codex-cli 0.999.0-alpha.7"
+        self.contents[key] = metadata_bytes(changed)
+        self.contents[(self.head, str(auto.GENERATED))] = auto.supported_swift(
+            changed
+        ).encode()
+        self.merge()
+        self.assertEqual(len(self.writes), 1)
 
     def test_draft_closed_and_ordinary_prs_are_not_automatically_merged(self):
         self.pr["draft"] = True

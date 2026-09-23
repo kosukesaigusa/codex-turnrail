@@ -120,22 +120,6 @@ class UpstreamWatchTests(unittest.TestCase):
             "cli monitoring failed: CLI unavailable", watch.summary_body(observed)
         )
 
-    def test_public_prerelease_must_have_the_exact_requested_tag(self):
-        tag = "rust-v0.154.0-alpha.6.2"
-        release = {"tag_name": tag, "draft": False, "prerelease": True}
-        with patch.object(watch, "github", return_value=release):
-            self.assertEqual(watch.source_release(tag), release)
-        for invalid in (
-            {**release, "draft": True},
-            {**release, "tag_name": "rust-v0.154.0"},
-        ):
-            with (
-                self.subTest(release=invalid),
-                patch.object(watch, "github", return_value=invalid),
-                self.assertRaisesRegex(ValueError, "matching public source"),
-            ):
-                watch.source_release(tag)
-
     def test_download_errors_redirects_and_oversize_bodies_are_rejected(self):
         for status, code, body in (
             ("403", 22, b"denied"),

@@ -2,166 +2,67 @@
 
 set -euo pipefail
 
-if [[ "$#" -ne 4 && "$#" -ne 5 && "$#" -ne 7 ]]; then
-  echo "usage: $0 /output/directory 'Signing Identity' /official/codex dev-small|release [--ci [--engine-evidence /verified/engine]]" >&2
+if [[ "$#" -ne 3 && "$#" -ne 4 ]]; then
+  echo "usage: $0 /output/directory 'Signing Identity' /official/ChatGPT.app [--ci]" >&2
   exit 64
 fi
-
 output_directory="$1"
 signing_identity="$2"
-official_cli="$3"
-build_profile="$4"
+official_app="$3"
 ci_args=()
-engine_evidence=""
-record_args=()
-if [[ "$#" -ge 5 ]]; then
-  if [[ "$5" != --ci ]]; then
-    echo "unknown packaging option: $5" >&2
-    exit 64
-  fi
-  if [[ ! -v GITHUB_ACTIONS ]] || [[ "$GITHUB_ACTIONS" != true ]]; then
+if [[ "$#" -eq 4 ]]; then
+  if [[ "$4" != --ci || ! -v GITHUB_ACTIONS || "$GITHUB_ACTIONS" != true ]]; then
     echo "--ci requires a GitHub Actions runner." >&2
     exit 64
   fi
   ci_args=(--ci)
 fi
-if [[ "$#" -eq 7 ]]; then
-  if [[ "$6" != --engine-evidence || "$7" != /* || "$build_profile" != release ]]; then
-    echo "Engine evidence requires --ci, release, and an absolute evidence directory." >&2
-    exit 64
-  fi
-  engine_evidence="$7"
-  record_args=(--engine-provenance "$engine_evidence/manifest.json")
-fi
 script_directory="${0:A:h}"
 repository_root="${script_directory:h}"
-engine_repository="$repository_root/engine"
 app_directory="$repository_root/app"
-
-if [[ "$output_directory" != /* ]]; then
-  echo "output directory must be absolute: $output_directory" >&2
-  exit 64
-fi
-
-if [[ ! -f "$engine_repository/codex-rs/Cargo.toml" || ! -f "$script_directory/dev.py" ]]; then
-  echo "Turnrail Engine development workspace is missing: $engine_repository" >&2
-  exit 66
-fi
-
-if [[ ! -f "$repository_root/tests/integration/verify_runtime.py" ]]; then
-  echo "Turnrail runtime verifier is missing: $repository_root/tests/integration/verify_runtime.py" >&2
-  exit 66
-fi
-
 app_name="Codex Turnrail.app"
 output_app="$output_directory/$app_name"
-
+if [[ "$output_directory" != /* || "$official_app" != /* ]]; then
+  echo "Output and official app paths must be absolute." >&2
+  exit 64
+fi
 if [[ -e "$output_app" ]]; then
-  echo "output already exists: $output_app" >&2
+  echo "Output already exists: $output_app" >&2
   exit 73
 fi
-
-# The final app must survive the cleanup at the end of this workflow.
-python3 - "$output_directory" "$engine_repository" "$app_directory" <<'PY'
+python3 - "$output_directory" "$repository_root" <<'PY'
 from pathlib import Path
 import sys
-
-output, engine, app = (Path(value).resolve() for value in sys.argv[1:])
-for generated in (engine / "codex-rs/target", app / ".build"):
+output, root = (Path(value).resolve() for value in sys.argv[1:])
+for generated in (root / "engine/codex-rs/target", root / "app/.build"):
     if output.is_relative_to(generated.resolve()):
         raise SystemExit(f"Output must be outside generated build directories: {generated}")
 PY
-
-app_icon="$repository_root/packaging/resources/AppIcon.icns"
-
-if [[ ! -f "$app_icon" ]]; then
-  echo "App icon is missing: $app_icon" >&2
-  exit 66
-fi
-
-code_mode_host_entitlements="$repository_root/packaging/entitlements/codex-code-mode-host.entitlements"
-
-if [[ "$build_profile" != dev-small && "$build_profile" != release ]]; then
-  echo "build profile must be dev-small or release" >&2
-  exit 64
-fi
-
 python3 "$script_directory/project_metadata.py"
-python3 "$script_directory/release.py" check-cli "$official_cli"
-
-if [[ ! -x "$official_cli" ]]; then
-  echo "Official Codex CLI is not executable: $official_cli" >&2
-  exit 66
-fi
-
-if [[ ! -f "$code_mode_host_entitlements" ]]; then
-  echo "Code Mode host entitlements are missing: $code_mode_host_entitlements" >&2
-  exit 66
-fi
+python3 "$script_directory/official_app.py" verify "$official_app"
+python3 "$script_directory/dev.py" "${ci_args[@]}" swift build -c release --jobs 2
 
 staging_root="$(mktemp -d /tmp/codex-turnrail-app.XXXXXX)"
 trap 'rm -rf "$staging_root"' EXIT
-
 staging_app="$staging_root/$app_name"
 contents="$staging_app/Contents"
-
 mkdir -p "$contents/MacOS" "$contents/Resources"
-runtime_package="$contents/Resources/engine"
-if [[ -n "$engine_evidence" ]]; then
-  python3 "$script_directory/engine_artifacts.py" install "$engine_evidence" "$runtime_package"
-else
-  python3 "$script_directory/build-runtime.py" "$runtime_package" "$build_profile" "${ci_args[@]}"
-fi
-
-"$script_directory/verify-protocol-compatibility.sh" "$official_cli" "$runtime_package/bin/codex"
-
-python3 "$script_directory/dev.py" "${ci_args[@]}" swift build -c release
-
-/usr/bin/ditto \
-  "$app_directory/.build/release/CodexTurnrailApp" \
-  "$contents/MacOS/CodexTurnrailApp"
+for binary in CodexTurnrailApp CodexTurnrailRouter; do
+  /usr/bin/ditto "$app_directory/.build/release/$binary" "$contents/MacOS/$binary"
+  /usr/bin/codesign --force --options runtime --timestamp --sign "$signing_identity" "$contents/MacOS/$binary"
+done
 /usr/bin/ditto "$repository_root/packaging/Info.plist" "$contents/Info.plist"
-/usr/bin/ditto "$app_icon" "$contents/Resources/AppIcon.icns"
+/usr/bin/ditto "$repository_root/packaging/resources/AppIcon.icns" "$contents/Resources/AppIcon.icns"
 python3 "$script_directory/build_notices.py" "$contents/Resources/Licenses"
-
-for runtime_binary in bin/codex codex-path/rg codex-resources/zsh/bin/zsh; do
-  /usr/bin/codesign \
-    --force \
-    --options runtime \
-    --timestamp \
-    --sign "$signing_identity" \
-    "$runtime_package/$runtime_binary"
-done
-/usr/bin/codesign \
-  --force \
-  --options runtime \
-  --timestamp \
-  --entitlements "$code_mode_host_entitlements" \
-  --sign "$signing_identity" \
-  "$runtime_package/bin/codex-code-mode-host"
-for runtime_binary in bin/codex bin/codex-code-mode-host codex-path/rg codex-resources/zsh/bin/zsh; do
-  /usr/bin/codesign --verify --strict "$runtime_package/$runtime_binary"
-done
-/usr/bin/codesign \
-  --force \
-  --options runtime \
-  --timestamp \
-  --sign "$signing_identity" \
-  "$staging_app"
+/usr/bin/codesign --force --options runtime --timestamp --sign "$signing_identity" "$staging_app"
 /usr/bin/codesign --verify --deep --strict "$staging_app"
 mkdir -p "$output_directory"
 /usr/bin/ditto "$staging_app" "$output_app"
 /usr/bin/codesign --verify --deep --strict "$output_app"
-
-UV_PROJECT_ENVIRONMENT="$staging_root/python-venv" uv sync \
-  --project "$engine_repository/scripts/codex_package/smoke_tests" --frozen
-"$staging_root/python-venv/bin/python" "$repository_root/tests/integration/verify_runtime.py" \
-  "$output_app/Contents/Resources/engine" "$output_directory/runtime-verification.json"
-python3 "$script_directory/release.py" record "$output_directory" "$build_profile" "${record_args[@]}"
-
-# The CI workflow saves build reports and the Cargo cache before its final cleanup.
+python3 "$script_directory/verify_official_runtime.py" "$official_app" \
+  "$output_app/Contents/MacOS/CodexTurnrailRouter" "$output_directory/runtime-verification.json" "${ci_args[@]}"
+python3 "$script_directory/release.py" record "$output_directory"
 if [[ ${#ci_args} -eq 0 ]]; then
   just --justfile "$repository_root/justfile" finish
 fi
-
 echo "$output_app"

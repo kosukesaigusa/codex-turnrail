@@ -64,6 +64,7 @@ class UpstreamTests(unittest.TestCase):
                     },
                     "app": {
                         "bundle_identifier": "com.openai.codex",
+                        "cli_version": "codex-cli 1.0.0",
                         "version": "1.0.0",
                         "build": "1",
                     },
@@ -142,6 +143,7 @@ class UpstreamTests(unittest.TestCase):
                 },
                 "app": {
                     "bundle_identifier": "com.openai.codex",
+                    "cli_version": "codex-cli 1.0.0",
                     "version": "1.0.0",
                     "build": "1",
                 },
