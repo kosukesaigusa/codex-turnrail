@@ -99,9 +99,9 @@ struct StatusNotice: Equatable, Identifiable {
         break
       }
     }
-    if let error = error as? EnginePathResolverError {
+    if let error = error as? RouterPathResolverError {
       switch error {
-      case .packagedResourcesUnavailable, .engineIsNotExecutable:
+      case .packagedResourcesUnavailable, .routerIsNotExecutable:
         return Self(
           title: "Reinstall Turnrail",
           message: "Reinstall Codex Turnrail from its release archive.\n\n"

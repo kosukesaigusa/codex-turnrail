@@ -3,14 +3,15 @@ Copyright 2026 Codex Turnrail contributors
 
 Licensed under the Apache License, Version 2.0. See LICENSE.
 
-Codex Turnrail includes a modified version of OpenAI Codex. Its upstream source
-revision is recorded in upstream.toml. The original Apache-2.0 license and NOTICE
-are retained in engine/LICENSE and engine/NOTICE. Component-specific licenses
-remain applicable to the corresponding components.
+This source repository retains a modified OpenAI Codex source tree for protocol
+reference and provenance. Its upstream revision is recorded in upstream.toml.
+The original Apache-2.0 license and NOTICE are retained in engine/LICENSE and
+engine/NOTICE. Component-specific licenses remain applicable to those sources.
 
-Packaged apps include license texts and a Rust-SOURCES.json source index under
-Contents/Resources/Licenses. The index identifies the corresponding source for
-Rust dependencies, including components governed by MPL-2.0.
+The distributed Turnrail app contains the Swift settings app and account router.
+It uses a separately installed, unmodified official ChatGPT app and does not
+redistribute the Codex Engine, Code Mode Host, or their dependencies. Turnrail's
+license and runtime notices are included under Contents/Resources/Licenses.
 
 Codex Turnrail is an independent project and is not affiliated with or endorsed
 by OpenAI.

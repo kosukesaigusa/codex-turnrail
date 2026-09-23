@@ -30,21 +30,23 @@ Only the app ZIP is needed. No Terminal commands are required.
 
 ![See usage before you switch. Codex Turnrail's Switch screen showing the personal folder's assigned accounts, remaining usage, reset times, and account priority using demo data](docs/images/02-usage-and-priority.png)
 
-Folder rules apply to subfolders. The Engine selects an available account from the matching rule before each turn. Active turns keep their account; changes apply to the next turn.
+Folder rules apply to subfolders. Turnrail selects an available account from the matching rule before each turn. Active turns keep their account; changes apply to the next turn.
 
 **Switch** and **Accounts** show remaining usage, reset times, and last-used times. Select **available resets** to view each saved reset and its expiration date. Reset counts appear only when at least one is available. Reauthentication and account removal are in the **Accounts** menu.
 
 ## Conversation data
 
-Account credentials are stored separately in macOS Keychain. Conversation history uses the shared `~/.codex` store.
+Account credentials are stored separately in macOS Keychain. Conversation history uses the shared `~/.codex` store. Turnrail also keeps private routing and model-request history under its Application Support directory so conversations can continue across account changes and connection interruptions.
 
 Switching accounts carries the existing conversation context into the next request under the selected account. Assign only accounts that may receive that folder's code and conversation history. Keep work folders restricted to accounts approved for that work.
 
-Removing an account deletes its Turnrail credentials and account settings. Shared conversation history remains.
+ChatGPT stays signed in to its original account. Turnrail routes model requests; connected Apps, their uploads, and other account services still use ChatGPT's sign-in. Files referenced by a server-side file ID may be inaccessible to the routed account. Only combine accounts allowed to handle the same data.
+
+Removing an account deletes its Turnrail credentials and account settings. Shared conversation and routing history remain.
 
 ## Development
 
-The Swift app lives in `app/` and the Codex Engine in `engine/`. It launches ChatGPT with a dedicated Codex Engine, preserving the official app's bundle and signature. Use the root `justfile` for builds and checks.
+The Swift app and local account router live in `app/`. Turnrail runs the signed Engine and Code Mode Host already included in the supported ChatGPT installation, without modifying or redistributing those executables. The source tree in `engine/` is retained for protocol reference and provenance. Use the root `justfile` for builds and checks.
 
 See [Development](docs/development.md) to build from source and [Verification](docs/verification.md) for validation results and remaining checks.
 
@@ -52,4 +54,4 @@ See [Architecture](docs/architecture.md) for routing and storage details, [Engin
 
 ## License
 
-Codex Turnrail is licensed under [Apache-2.0](LICENSE). The Engine retains its upstream [license](engine/LICENSE), [NOTICE](engine/NOTICE), and component-specific licenses. Packaged apps include the applicable license texts and notices.
+Codex Turnrail is licensed under [Apache-2.0](LICENSE). The reference source tree retains its upstream [license](engine/LICENSE), [NOTICE](engine/NOTICE), and component-specific licenses. Packaged apps include Turnrail's license and notices; the official ChatGPT app is installed separately.

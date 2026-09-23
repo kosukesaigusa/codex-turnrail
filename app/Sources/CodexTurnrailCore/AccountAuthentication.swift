@@ -4,15 +4,18 @@ public struct AccountAuthenticationCommand: Equatable, Sendable {
   public let executableURL: URL
   public let arguments: [String]
   public let environment: [String: String]
+  public let expectedEmail: String?
 
   public init(
     executableURL: URL,
     arguments: [String],
-    environment: [String: String]
+    environment: [String: String],
+    expectedEmail: String?
   ) {
     self.executableURL = executableURL
     self.arguments = arguments
     self.environment = environment
+    self.expectedEmail = expectedEmail
   }
 }
 
@@ -55,12 +58,13 @@ public enum AccountAuthenticationCommandFactory {
   ) -> AccountAuthenticationCommand {
     var environment = inheritedEnvironment
     environment["CODEX_HOME"] = authHomeURL.path
-    environment["CODEX_TURNRAIL_EXPECTED_EMAIL"] = expectedEmail
+    environment.removeValue(forKey: "CODEX_TURNRAIL_EXPECTED_EMAIL")
     environment.removeValue(forKey: "CODEX_TURNRAIL_ROOT")
     return AccountAuthenticationCommand(
       executableURL: engineURL,
       arguments: arguments + ["--config", "cli_auth_credentials_store=\"keyring\""],
-      environment: environment
+      environment: environment,
+      expectedEmail: expectedEmail
     )
   }
 }

@@ -35,19 +35,19 @@ public enum AccountReaderError: LocalizedError, Equatable {
     case .timedOut:
       "Timed out while reading the ChatGPT account."
     case .engineExited(let status, let message):
-      "Turnrail Engine exited with status \(status): \(message)"
+      "ChatGPT Engine exited with status \(status): \(message)"
     case .invalidResponse:
-      "Turnrail Engine returned an invalid account response."
+      "ChatGPT Engine returned an invalid account response."
     case .serverError(let failure):
-      "Turnrail Engine could not read the ChatGPT account: \(failure.message)"
+      "ChatGPT Engine could not read the ChatGPT account: \(failure.message)"
     case .unsupportedAccountType(let type):
-      "Turnrail Engine returned unsupported account type \(type)."
+      "ChatGPT Engine returned unsupported account type \(type)."
     case .missingEmail:
       "ChatGPT did not return an email address for this account."
     case .unsupportedPlan(let plan):
-      "Turnrail Engine returned unsupported plan type \(plan)."
+      "ChatGPT Engine returned unsupported plan type \(plan)."
     case .invalidUsage(let message):
-      "Turnrail Engine returned invalid usage data: \(message)"
+      "ChatGPT Engine returned invalid usage data: \(message)"
     }
   }
 }
@@ -183,7 +183,12 @@ enum AccountServerFailureParser {
 
   private static func containsExpiredTokenCode(in value: Any) -> Bool {
     if let object = value as? [String: Any] {
-      if let code = object["code"] as? String, code == "token_expired" {
+      if let code = object["code"] as? String,
+        [
+          "token_expired", "token_revoked", "refresh_token_reused", "refresh_token_expired",
+          "refresh_token_invalidated",
+        ].contains(code)
+      {
         return true
       }
       return object.values.contains { containsExpiredTokenCode(in: $0) }
@@ -201,6 +206,15 @@ enum AccountAppServerTransport {
     authHomeURL: URL,
     request: String,
     responseID: Int
+  ) throws -> String {
+    try AccountCredentialStore.withExclusiveAccess(to: authHomeURL) {
+      try lockedRequest(
+        engineURL: engineURL, authHomeURL: authHomeURL, request: request, responseID: responseID)
+    }
+  }
+
+  private static func lockedRequest(
+    engineURL: URL, authHomeURL: URL, request: String, responseID: Int
   ) throws -> String {
     let process = ManagedAccountReadProcess()
     let standardInput = Pipe()

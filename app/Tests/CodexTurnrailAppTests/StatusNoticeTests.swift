@@ -42,7 +42,7 @@ struct StatusNoticeTests {
     let supported = supportedCompatibilityReport()
     let report = CompatibilityReport(
       installed: supported.installed, engineVersion: "codex-cli 0",
-      mismatches: ["Turnrail Engine codex-cli 0 does not match the supported CLI."]
+      mismatches: ["ChatGPT Engine codex-cli 0 does not match the supported CLI."]
     )
     let notice = StatusNotice.compatibility(report)
     #expect(notice.title == "Reinstall Turnrail")

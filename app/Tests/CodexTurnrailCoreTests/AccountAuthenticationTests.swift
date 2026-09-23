@@ -32,10 +32,10 @@ struct AccountAuthenticationTests {
       ]
     )
 
+    #expect(command.expectedEmail == "registered@example.com")
     #expect(
       command.environment == [
         "CODEX_HOME": "/tmp/account/auth-home",
-        "CODEX_TURNRAIL_EXPECTED_EMAIL": "registered@example.com",
         "PATH": "/usr/bin:/bin",
       ])
   }
