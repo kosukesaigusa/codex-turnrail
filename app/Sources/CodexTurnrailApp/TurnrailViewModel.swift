@@ -67,7 +67,7 @@ final class TurnrailViewModel: ObservableObject {
     case checking
     case ready(CompatibilityReport)
     case blocked(StatusNotice)
-    case launched
+    case launched(CompatibilityReport)
   }
 
   enum LoginTarget: Equatable {
@@ -165,6 +165,13 @@ final class TurnrailViewModel: ObservableObject {
     return nil
   }
 
+  var compatibilityReport: CompatibilityReport? {
+    switch state {
+    case .ready(let report), .launched(let report): report
+    case .checking, .blocked: nil
+    }
+  }
+
   var canLaunch: Bool {
     guard case .ready = state, registryLoadError == nil, !isCodexRunning else {
       return false
@@ -202,7 +209,7 @@ final class TurnrailViewModel: ObservableObject {
       compatibilityProbe: { try CompatibilityProbe().probe(appURL: $0, engineURL: $1) },
       isApplicationRunning: {
         !NSRunningApplication.runningApplications(
-          withBundleIdentifier: CodexCompatibilityContract.supported.bundleIdentifier
+          withBundleIdentifier: CodexCompatibilityContract.reference.bundleIdentifier
         ).isEmpty
       },
       identityReader: .live,
@@ -733,7 +740,8 @@ final class TurnrailViewModel: ObservableObject {
       _ = try routerURLResult.get()
       let report = try compatibilityProbe(appURL, engineURL)
       let notice = StatusNotice.compatibility(report)
-      state = report.isCompatible ? .ready(report) : .blocked(notice)
+      state = report.canLaunch ? .ready(report) : .blocked(notice)
+      refreshApplicationState()
       return notice
     } catch {
       let notice = StatusNotice.compatibilityError(error)
@@ -743,7 +751,7 @@ final class TurnrailViewModel: ObservableObject {
   }
 
   func launchCodex() {
-    guard canLaunch else {
+    guard canLaunch, case .ready(let report) = state else {
       return
     }
 
@@ -779,7 +787,7 @@ final class TurnrailViewModel: ObservableObject {
             title: "ChatGPT Launch Failed", message: message, recovery: nil))
         return
       }
-      state = .launched
+      state = .launched(report)
     } catch {
       state = .blocked(
         StatusNotice(

@@ -113,13 +113,29 @@ protocol RouterAccountProviding: Sendable {
 final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
   let root: URL
   let engine: URL
+  private let modelsURL: URL
   private let http = RouterHTTP()
   private let lock = NSRecursiveLock()
   private var cache: [UUID: RouterAccountSnapshot] = [:]
 
-  init(root: URL, engine: URL) {
+  init(root: URL, engine: URL, engineVersion: String) throws {
     self.root = root
     self.engine = engine
+    modelsURL = try Self.modelCatalogURL(engineVersion: engineVersion)
+  }
+
+  static func modelCatalogURL(engineVersion: String) throws -> URL {
+    let prefix = "codex-cli "
+    guard engineVersion.hasPrefix(prefix) else {
+      throw RouterFailure("The installed Engine returned an unrecognized version.")
+    }
+    let version = String(engineVersion.dropFirst(prefix.count))
+    guard version.range(of: #"^[0-9][0-9A-Za-z.+-]*$"#, options: .regularExpression) != nil else {
+      throw RouterFailure("The installed Engine returned an invalid version.")
+    }
+    var components = URLComponents(string: "https://chatgpt.com/backend-api/codex/models")!
+    components.queryItems = [URLQueryItem(name: "client_version", value: version)]
+    return components.url!
   }
 
   func registry() throws -> AccountRegistryState {
@@ -169,11 +185,7 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
       let usage = try http.get(
         URL(string: "https://chatgpt.com/backend-api/wham/usage")!, credential: credential)
       let usable = try Self.generalQuotaIsUsable(usage)
-      let version = CodexCompatibilityContract.supported.cliVersion.replacingOccurrences(
-        of: "codex-cli ", with: "")
-      var components = URLComponents(string: "https://chatgpt.com/backend-api/codex/models")!
-      components.queryItems = [URLQueryItem(name: "client_version", value: version)]
-      let models = try RouterJSON.array(http.get(components.url!, credential: credential), "models")
+      let models = try RouterJSON.array(http.get(modelsURL, credential: credential), "models")
       var slugs = Set<String>()
       for model in models {
         guard slugs.insert(try RouterJSON.text(model, "slug")).inserted else {

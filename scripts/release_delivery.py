@@ -89,7 +89,11 @@ def prepare_notes(output, repository, tag):
         "Unzip the app, move it to Applications, and open it. "
         "No Terminal commands are required.\n\n"
     )
-    note += f"Requires the ChatGPT macOS app {app['version']} ({app['build']}).\n\n"
+    note += f"ChatGPT release reference: {app['version']} ({app['build']}).\n\n"
+    note += (
+        "Other ChatGPT versions can also be used. Version matching is not required "
+        "and does not guarantee that every feature will work.\n\n"
+    )
     note += "<details>\n<summary>Verification</summary>\n\n"
     note += f"- Product: {manifest['version']} ({manifest['build']}).\n"
     note += f"- Source: `{manifest['source_commit']}`.\n"

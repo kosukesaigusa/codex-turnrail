@@ -1,6 +1,6 @@
 # Official Engine and reference sources
 
-Turnrail uses the unmodified Engine and Code Mode Host included in the supported ChatGPT installation. Its Swift router selects accounts outside those binaries. The app-server protocol, Code Mode runtime, browser integration, Shell, and approval implementation come from the official installation.
+Turnrail uses the unmodified Engine and Code Mode Host included in the installed ChatGPT app. Its Swift router selects accounts outside those binaries. The app-server protocol, Code Mode runtime, browser integration, Shell, and approval implementation come from the official installation.
 
 ## Provenance and compatibility
 

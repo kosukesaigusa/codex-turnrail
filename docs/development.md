@@ -57,7 +57,7 @@ To run Settings from the build directory:
 CODEX_TURNRAIL_ROUTER_PATH="$PWD/app/.build/release/CodexTurnrailRouter" app/.build/release/CodexTurnrailApp
 ```
 
-A missing helper, incompatible official installation, or invalid signature is an error. Account operations use the official Engine. **Open Codex** starts its router and Engine only after the existing ChatGPT app has exited.
+A missing helper, invalid official installation, or invalid signature is an error. App and Engine version differences from the release reference do not block launch. Account operations use the official Engine. **Open Codex** starts its router and Engine only after the existing ChatGPT app has exited.
 
 Build a signed app in a new output directory:
 
@@ -89,9 +89,9 @@ The reserve is a preflight threshold, not a disk-usage limit. Save logs and pack
 
 ## Upstream updates
 
-`upstream.toml` records the supported official app and its exact bundled CLI version. The reference source pin is independent. Hourly app monitoring prepares compatibility-only PRs, and CI verifies the Swift router with the new signed official app. It does not update or compile the reference tree in `engine/`.
+`upstream.toml` records the reference official app and its exact bundled CLI version. The reference source pin is independent. Hourly app monitoring prepares release-reference PRs, and CI verifies the Swift router with the new signed official app. It does not update or compile the reference tree in `engine/`.
 
-From a clean committed worktree, `just sync-upstream rust-vX.Y.Z` fetches the recorded base and requested release, prepares uncommitted source changes, updates provenance and lockfiles, and reports conflicts without publishing. It does not stage, commit, push, or move branch/tag refs. Review the reference-source diff and run the affected reference checks. Reference updates do not change the app compatibility contract. For an official app update, change `[app]`, run `just metadata-write`, and validate the official runtime and affected product checks. A source tag or version match alone does not prove official UI compatibility.
+From a clean committed worktree, `just sync-upstream rust-vX.Y.Z` fetches the recorded base and requested release, prepares uncommitted source changes, updates provenance and lockfiles, and reports conflicts without publishing. It does not stage, commit, push, or move branch/tag refs. Review the reference-source diff and run the affected reference checks. Reference-source updates do not change the app release reference. For an official app update, change `[app]`, run `just metadata-write`, and validate the official runtime and affected product checks. A source tag or version match alone does not prove official UI compatibility.
 
 The retained `build-engine`, `check-engine`, `test-engine`, `lint-engine`, `fix-engine`, and `build-runtime` commands are reference-source development tools. Follow `engine/AGENTS.md` when using them. They are not prerequisites for building or distributing Turnrail.
 

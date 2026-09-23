@@ -15,7 +15,7 @@ public enum OfficialEngineRouter {
       throw RouterFailure("CODEX_TURNRAIL_APP must name the official ChatGPT installation.")
     }
     let engine = URL(filePath: appPath).appending(path: "Contents/Resources/codex")
-    try OfficialEngineInstallation.verify(app: URL(filePath: appPath))
+    let installed = try OfficialEngineInstallation.verify(app: URL(filePath: appPath))
     if try !RouterEngineObserver.isAppServer(arguments) {
       let result = try CommandExecutor.live.execute(
         engine, arguments: arguments, environment: environment)
@@ -38,8 +38,10 @@ public enum OfficialEngineRouter {
       home = try RouterDirectory.canonical(
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".codex").path)
     }
-    try RouterHelperConfiguration.synchronizePlugin(home: home, router: executable, engine: engine)
-    let runtime = try RouterRuntime(root: URL(filePath: rootPath), engine: engine)
+    try RouterHelperConfiguration.synchronizePlugin(
+      home: home, router: executable, engine: engine, appVersion: installed.appVersion)
+    let runtime = try RouterRuntime(
+      root: URL(filePath: rootPath), engine: engine, engineVersion: installed.cliVersion)
     defer { runtime.stop() }
     runtime.start()
     let overrides = try runtime.configuration(engine: engine, home: home, executable: executable)
@@ -81,7 +83,7 @@ public enum OfficialEngineRouter {
               RouterHelperConfiguration.loadingMethods.contains(method)
             {
               try RouterHelperConfiguration.synchronizePlugin(
-                home: home, router: executable, engine: engine)
+                home: home, router: executable, engine: engine, appVersion: installed.appVersion)
             }
             try observer.request(message)
           } catch {
@@ -194,7 +196,8 @@ public enum OfficialEngineRouter {
 }
 
 public enum OfficialEngineInstallation {
-  public static func verify(app: URL) throws {
+  @discardableResult
+  public static func verify(app: URL) throws -> CodexInstallation {
     let engine = app.appending(path: "Contents/Resources/codex")
     for binary in [app, engine, app.appending(path: "Contents/Resources/codex-code-mode-host")] {
       var requirement = "anchor apple generic and certificate leaf[subject.OU] = \"2DC432GLL2\""
@@ -209,8 +212,9 @@ public enum OfficialEngineInstallation {
     }
     // Do not execute --version until the executable's origin has been verified.
     let report = try CompatibilityProbe().probe(appURL: app, engineURL: engine)
-    guard report.isCompatible else {
-      throw RouterFailure(report.mismatches.joined(separator: "\n"))
+    guard report.canLaunch else {
+      throw RouterFailure(report.launchIssues.joined(separator: "\n"))
     }
+    return report.installed
   }
 }

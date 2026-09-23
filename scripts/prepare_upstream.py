@@ -97,18 +97,20 @@ def publish(repository, branch, candidate, version):
             "git",
             "commit",
             "-m",
-            f"chore: support ChatGPT {candidate['version']} ({candidate['build']})",
+            f"chore: update ChatGPT reference to {candidate['version']} "
+            f"({candidate['build']})",
         ],
         check=True,
     )
     subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], check=True)
     body = (
         "## Summary\n\n"
-        f"Update the supported ChatGPT macOS app to {candidate['version']} "
+        f"Update the reference ChatGPT macOS app to {candidate['version']} "
         f"({candidate['build']}). "
         f"Its signed bundle reports `{version}`.\n\n"
         "The app, Engine, and Code Mode Host passed OpenAI signature inspection. "
-        "Update the exact app compatibility contract; Turnrail runs the Engine "
+        "Update the release reference; other installed versions remain usable. "
+        "Turnrail runs the Engine "
         "from the installed ChatGPT app. "
         "Public CLI source availability is not required.\n\n"
         "## Test plan\n\n"
@@ -123,7 +125,7 @@ def publish(repository, branch, candidate, version):
         f"repos/{repository}/pulls",
         method="POST",
         payload={
-            "title": f"chore: support ChatGPT {candidate['version']}",
+            "title": f"chore: update ChatGPT reference to {candidate['version']}",
             "head": branch,
             "base": "main",
             "draft": False,

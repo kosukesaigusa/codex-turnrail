@@ -671,7 +671,6 @@ private struct TurnrailStatusControls: View {
     VStack(spacing: 10) {
       Divider().padding(.bottom, 6)
       HStack(spacing: 8) {
-        Circle().fill(statusColor).frame(width: 9, height: 9)
         Text(model.statusText)
         Spacer()
         if let notice = model.statusNotice {
@@ -693,9 +692,19 @@ private struct TurnrailStatusControls: View {
       Button {
         showNotice(model.refreshCompatibility())
       } label: {
-        Text("Check Compatibility").frame(maxWidth: .infinity)
+        HStack(spacing: 8) {
+          Circle().fill(versionColor).frame(width: 8, height: 8)
+          Text(versionText)
+          Spacer()
+          Image(systemName: "info.circle")
+        }
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
       }
-      .controlSize(.large)
+      .buttonStyle(.plain)
+      .accessibilityLabel("ChatGPT: \(versionText)")
+      .accessibilityHint("Show version details and Turnrail releases")
       Text("v\(TurnrailVersion.current)")
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -707,10 +716,19 @@ private struct TurnrailStatusControls: View {
 
   }
 
-  private var statusColor: Color {
-    if model.statusNotice != nil { return .orange }
-    if model.isCodexRunning || model.canLaunch { return .green }
-    if case .checking = model.state { return .secondary }
-    return .orange
+  private var versionColor: Color {
+    if let report = model.compatibilityReport {
+      return report.matchesReference ? .green : .yellow
+    }
+    if case .blocked = model.state { return .orange }
+    return .secondary
+  }
+
+  private var versionText: String {
+    if let report = model.compatibilityReport {
+      return report.matchesReference ? "Version match" : "Version differs"
+    }
+    if case .blocked = model.state { return "Check ChatGPT" }
+    return "Checking version"
   }
 }

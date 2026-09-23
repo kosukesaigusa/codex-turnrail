@@ -21,7 +21,7 @@ struct AccountMonitoringTests {
       loginExecutor: AccountLoginExecutor { _ in
         CommandResult(exitCode: 0, standardOutput: "", standardError: "")
       },
-      compatibilityProbe: { _, _ in supportedCompatibilityReport() },
+      compatibilityProbe: { _, _ in referenceCompatibilityReport() },
       isApplicationRunning: { false },
       identityReader: AccountIdentityReader { _, _ in try await gate.read() },
       usageReader: AccountUsageReader { _, _ in try usage(used: 10) }
@@ -145,7 +145,7 @@ private struct Fixture {
       loginExecutor: AccountLoginExecutor { _ in
         CommandResult(exitCode: 0, standardOutput: "", standardError: "")
       },
-      compatibilityProbe: { _, _ in supportedCompatibilityReport() },
+      compatibilityProbe: { _, _ in referenceCompatibilityReport() },
       isApplicationRunning: { false },
       identityReader: AccountIdentityReader { _, _ in
         try ChatGPTAccountIdentity(email: "account@example.com", planType: .pro)

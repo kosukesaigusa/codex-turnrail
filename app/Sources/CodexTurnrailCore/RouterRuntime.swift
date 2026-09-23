@@ -11,9 +11,10 @@ final class RouterRuntime: @unchecked Sendable {
   private let search: @Sendable (URLRequest) throws -> Data
   private let reportFailure: @Sendable (String) -> Void
 
-  convenience init(root: URL, engine: URL) throws {
+  convenience init(root: URL, engine: URL, engineVersion: String) throws {
     try self.init(
-      root: root, accounts: RouterAccounts(root: root, engine: engine),
+      root: root,
+      accounts: RouterAccounts(root: root, engine: engine, engineVersion: engineVersion),
       connect: { RouterWebSocket(account: $0, headers: $1) })
   }
 

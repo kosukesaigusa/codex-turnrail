@@ -6,31 +6,27 @@ import Testing
 
 struct StatusNoticeTests {
   @Test
-  func successReportsOnlyCompatibility() {
-    let notice = StatusNotice.compatibility(supportedCompatibilityReport())
-    #expect(notice.title == "Compatible")
-    #expect(notice.message == "This version of the ChatGPT app is supported.")
-    #expect(notice.recovery == nil)
+  func aMatchDescribesTheReleaseReferenceAndOffersReleases() {
+    let notice = StatusNotice.compatibility(referenceCompatibilityReport())
+    #expect(notice.title == "ChatGPT Version")
+    #expect(notice.message.contains("matches the reference"))
+    #expect(notice.recovery == .releases)
+    #expect(notice.recovery?.title == "See releases")
   }
 
   @Test
-  func anUnsupportedVersionShowsInstalledAndSupportedVersionsAndReleases() {
-    let contract = CodexCompatibilityContract.supported
+  func aDifferentVersionExplainsThatTurnrailCanStillBeUsed() {
+    let reference = CodexCompatibilityContract.reference
     let installed = CodexInstallation(
-      bundleIdentifier: contract.bundleIdentifier, appVersion: "99.1", appBuild: "9999",
-      cliVersion: contract.cliVersion
-    )
-    let report = CompatibilityReport(
-      installed: installed, engineVersion: contract.cliVersion,
-      mismatches: CompatibilityEvaluator.evaluate(
-        contract: contract, installed: installed, engineVersion: contract.cliVersion
-      )
-    )
-    #expect(!report.isCompatible)
+      bundleIdentifier: reference.bundleIdentifier, appVersion: "99.1", appBuild: "9999",
+      cliVersion: "codex-cli 99.2.0")
+    let report = CompatibilityReport(installed: installed, engineVersion: installed.cliVersion)
     let notice = StatusNotice.compatibility(report)
-    #expect(notice.title == "Unsupported ChatGPT Version")
+    #expect(notice.title == "ChatGPT Version")
     #expect(notice.message.contains("99.1 (9999)"))
-    #expect(notice.message.contains("\(contract.appVersion) (\(contract.appBuild))"))
+    #expect(notice.message.contains("codex-cli 99.2.0"))
+    #expect(notice.message.contains("\(reference.appVersion) (\(reference.appBuild))"))
+    #expect(notice.message.contains("You can still use Turnrail"))
     #expect(notice.recovery == .releases)
     #expect(
       notice.recovery?.url.absoluteString
@@ -38,31 +34,9 @@ struct StatusNoticeTests {
   }
 
   @Test
-  func aWrongEngineRequiresReinstallingTurnrail() {
-    let supported = supportedCompatibilityReport()
+  func anEngineThatDoesNotBelongToChatGPTIsAnInstallationError() {
     let report = CompatibilityReport(
-      installed: supported.installed, engineVersion: "codex-cli 0",
-      mismatches: ["ChatGPT Engine codex-cli 0 does not match the supported CLI."]
-    )
-    let notice = StatusNotice.compatibility(report)
-    #expect(notice.title == "Reinstall Turnrail")
-    #expect(notice.recovery == .releases)
-  }
-
-  @Test
-  func aWrongBundledCLIIsNotReportedAsCompatible() {
-    let contract = CodexCompatibilityContract.supported
-    let installed = CodexInstallation(
-      bundleIdentifier: contract.bundleIdentifier,
-      appVersion: contract.appVersion, appBuild: contract.appBuild, cliVersion: "codex-cli 0"
-    )
-    let report = CompatibilityReport(
-      installed: installed, engineVersion: contract.cliVersion,
-      mismatches: CompatibilityEvaluator.evaluate(
-        contract: contract, installed: installed, engineVersion: contract.cliVersion
-      )
-    )
-    #expect(!report.isCompatible)
+      installed: referenceCompatibilityReport().installed, engineVersion: "codex-cli 0")
     let notice = StatusNotice.compatibility(report)
     #expect(notice.title == "Reinstall ChatGPT")
     #expect(notice.recovery == .installation)
@@ -76,13 +50,17 @@ struct StatusNoticeTests {
     #expect(missing.message.contains("/Applications/ChatGPT.app"))
     #expect(missing.recovery == .installation)
     let broken = StatusNotice.compatibilityError(
-      CompatibilityProbeError.engineUnavailable("/test/engine"))
+      RouterPathResolverError.routerIsNotExecutable("/test/router"))
     #expect(broken.title == "Reinstall Turnrail")
     #expect(broken.recovery == .releases)
-    let corrupt = StatusNotice.compatibilityError(
-      CompatibilityProbeError.invalidInfoPlist("CFBundleVersion"))
-    #expect(corrupt.title == "Reinstall ChatGPT")
-    #expect(corrupt.recovery == .installation)
+    for error in [
+      CompatibilityProbeError.invalidInfoPlist("CFBundleVersion"),
+      .engineUnavailable("/test/engine"),
+    ] {
+      let notice = StatusNotice.compatibilityError(error)
+      #expect(notice.title == "Reinstall ChatGPT")
+      #expect(notice.recovery == .installation)
+    }
   }
 
   @Test

@@ -155,7 +155,7 @@ def report_body(observation):
     lines.extend(
         [
             "",
-            "Turnrail follows the CLI bundled with the supported ChatGPT app.",
+            "Turnrail runs the CLI bundled with the installed ChatGPT app.",
             "Standalone CLI releases are recorded in the Actions summary and do not",
             "trigger Engine updates or keep this issue open.",
         ]
@@ -165,14 +165,18 @@ def report_body(observation):
             [
                 "",
                 "An app candidate must pass OpenAI signature and identity inspection",
-                "before a compatibility update PR is prepared. The PR runs routing",
+                "before a release-reference update PR is prepared. The PR runs routing",
                 "verification with its official Engine. No CLI source is required.",
                 "Official UI verification is required before release.",
             ]
         )
     elif not pending:
         lines.extend(
-            ["", "No unsupported ChatGPT app update or monitoring failure remains."]
+            [
+                "",
+                "No pending ChatGPT release-reference update or monitoring "
+                "failure remains.",
+            ]
         )
     return "\n".join(lines) + "\n", pending
 
