@@ -151,7 +151,7 @@ struct RouterBoundaryTests {
   func webSocketHandlesFragmentedMaskedJSONAndRejectsUnmaskedClients() throws {
     let pair = try SocketPair()
     try pair.client.write(
-      Data([0x01, 0x81, 1, 2, 3, 4, 0x7b ^ 1, 0x80, 0x81, 1, 2, 3, 4, 0x7d ^ 1]))
+      Data([0x01, 0x81, 1, 2, 3, 4, UInt8(0x7b) ^ 1, 0x80, 0x81, 1, 2, 3, 4, UInt8(0x7d) ^ 1]))
     #expect(try pair.server.message() == Data("{}".utf8))
     try pair.client.write(Data([0x81, 0x02, 0x7b, 0x7d]))
     #expect(throws: (any Error).self) { try pair.server.message() }
