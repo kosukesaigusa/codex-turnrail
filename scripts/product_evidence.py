@@ -15,6 +15,9 @@ SCENARIOS = {
     "compaction",
     "failure_recovery",
     "web_search",
+    "model_wait",
+    "model_wait_cancellation",
+    "engine_idle_timeout",
 }
 
 

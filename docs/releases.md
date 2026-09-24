@@ -39,7 +39,7 @@ Both entry points dispatch `.github/workflows/release.yml` from `main`, with an 
 1. Downloads the pinned official ChatGPT app and verifies archive paths, OpenAI signatures, the exact app version/build, and its bundled CLI version.
 2. Builds the Swift app and router from the tagged source. It does not build or bundle a Rust Engine.
 3. Includes product notices, signs both Swift executables and the app, and verifies their signatures.
-4. Runs the router-core fixture with the finished hook helper and official Engine, requiring Code Mode, account switching, titles, compaction, accepted and declined approvals, no replay after uncertain delivery, new-turn recovery, idle-connection recovery, and native HTTP web search to pass.
+4. Runs the router-core fixture with the finished hook helper and official Engine, requiring Code Mode, account switching, titles, compaction, accepted and declined approvals, no replay after uncertain delivery, new-turn recovery, idle-connection recovery, native HTTP web search, a response after 181 seconds of silence, cancellation while waiting, and the Engine's own idle timeout to pass.
 5. Submits a signed ZIP to Apple's notary service, requires `Accepted`, attaches the ticket to the app, and verifies the ticket and Gatekeeper assessment.
 6. Creates the final app ZIP from the stapled app and records its original checksum alongside the build, runtime, and notarization reports.
 7. Uploads only the app ZIP to a Draft Release with a direct download link and notes generated from merged PRs.

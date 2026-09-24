@@ -39,7 +39,7 @@ def verify(app, router, report, ci):
             "--filter",
             "RouterOfficialEngineTests",
         ]
-        subprocess.run(command, cwd=ROOT, env=environment, check=True, timeout=300)
+        subprocess.run(command, cwd=ROOT, env=environment, check=True, timeout=420)
         cases = json.loads(proof.read_text())
         if len(cases) != len(SCENARIOS) or set(cases) != SCENARIOS:
             raise ValueError(
