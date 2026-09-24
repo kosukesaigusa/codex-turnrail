@@ -14,8 +14,15 @@ final class RouterWebSocket: RouterUpstream, @unchecked Sendable {
   let accountID: UUID
   private let session: URLSession
   private let task: URLSessionWebSocketTask
-  private let delegate: RouterHTTP
+  private let policy: RouterConnectionPolicy
+  private let stateLock = NSLock()
+  private let probeLock = NSLock()
+  private let keeper: DispatchSourceTimer
+  private let createdAt = ProcessInfo.processInfo.systemUptime
   private var incoming = RouterAsyncResult<Data>()
+  private var pendingProbe: RouterAsyncResult<Void>?
+  private var pendingSend: RouterAsyncResult<Void>?
+  private var terminal: Error?
 
   convenience init(account: RouterAccountSnapshot, headers: [String: String]) {
     var request = URLRequest(url: URL(string: "wss://chatgpt.com/backend-api/codex/responses")!)
@@ -26,106 +33,156 @@ final class RouterWebSocket: RouterUpstream, @unchecked Sendable {
     ] {
       if let value = headers[name] { request.setValue(value, forHTTPHeaderField: name) }
     }
-    self.init(accountID: account.account.id, request: request)
+    self.init(accountID: account.account.id, request: request, policy: .live)
   }
 
-  init(accountID: UUID, request: URLRequest) {
-    let delegate = RouterHTTP()
-    self.delegate = delegate
+  init(accountID: UUID, request: URLRequest, policy: RouterConnectionPolicy) {
+    self.policy = policy
     self.accountID = accountID
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 30
     configuration.httpShouldSetCookies = false
     configuration.urlCache = nil
-    session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+    session = URLSession(configuration: configuration, delegate: RouterHTTP(), delegateQueue: nil)
     task = session.webSocketTask(with: request)
     task.maximumMessageSize = 64 * 1024 * 1024
+    keeper = DispatchSource.makeTimerSource(
+      queue: DispatchQueue(label: "Turnrail.websocket.keepalive"))
+    keeper.schedule(deadline: .now() + policy.keepAlive, repeating: policy.keepAlive)
+    keeper.setEventHandler { [weak self] in
+      // Failed probes close the transport and wake readers; inference is never resent.
+      do { try self?.probe(cause: .keepAlive) } catch {}
+    }
+    keeper.resume()
     task.resume()
     readNext(incoming)
   }
 
-  /// A pong confirms liveness without submitting a model request.
-  func checkConnection() throws {
-    let result = RouterAsyncResult<Void>()
-    task.sendPing { error in
-      if let error {
-        result.complete(.failure(self.failure(.check, error)))
-      } else {
-        result.complete(.success(()))
+  deinit { close() }
+
+  /// Serialize foreground and periodic pings, including while model output is quiet.
+  func checkConnection() throws { try probe(cause: .probe) }
+
+  private func probe(cause: RouterTransportFailure.Cause) throws {
+    try probeLock.withLock {
+      let result = RouterAsyncResult<Void>()
+      try stateLock.withLock {
+        if let terminal { throw inPhase(terminal, .check) }
+        pendingProbe = result
+      }
+      defer { stateLock.withLock { pendingProbe = nil } }
+      task.sendPing { [weak self] error in
+        guard let self else { return }
+        if let error {
+          result.complete(.failure(self.fail(.check, error, cause: cause)))
+        } else {
+          result.complete(.success(()))
+        }
+      }
+      do { try result.wait(seconds: policy.probe, timeout: URLError(.timedOut)) } catch {
+        throw fail(.check, error, cause: cause)
+      }
+      // The receive callback may have observed closure after the pong arrived.
+      try stateLock.withLock {
+        if let terminal { throw inPhase(terminal, .check) }
       }
     }
-    try result.wait(seconds: 10, timeout: failure(.check, URLError(.timedOut)))
   }
 
   func send(_ data: Data) throws {
     let result = RouterAsyncResult<Void>()
-    Task {
+    try stateLock.withLock {
+      if let terminal { throw inPhase(terminal, .send) }
+      pendingSend = result
+    }
+    defer { stateLock.withLock { pendingSend = nil } }
+    Task { [weak self, task] in
       do {
         try await task.send(.string(String(decoding: data, as: UTF8.self)))
         result.complete(.success(()))
       } catch {
-        result.complete(.failure(failure(.send, error)))
+        guard let self else { return }
+        result.complete(.failure(self.fail(.send, error, cause: .transport)))
       }
     }
-    try result.wait(seconds: 30, timeout: failure(.send, URLError(.timedOut)))
+    do { try result.wait(seconds: policy.send, timeout: URLError(.timedOut)) } catch {
+      throw fail(.send, error, cause: .sendTimeout)
+    }
   }
 
   func receive() throws -> Data {
-    let data = try incoming.wait(
-      seconds: 180, timeout: failure(.receive, URLError(.timedOut)))
-    incoming = RouterAsyncResult<Data>()
-    readNext(incoming)
+    let pending = stateLock.withLock { incoming }
+    let data: Data
+    do { data = try pending.wait(seconds: policy.receive, timeout: URLError(.timedOut)) } catch {
+      throw fail(.receive, error, cause: .receiveTimeout)
+    }
+    let next = RouterAsyncResult<Data>()
+    let shouldRead = stateLock.withLock {
+      incoming = next
+      if let terminal {
+        next.complete(.failure(terminal))
+        return false
+      }
+      return true
+    }
+    if shouldRead { readNext(next) }
     return data
   }
 
   private func readNext(_ result: RouterAsyncResult<Data>) {
-    // Keep one bounded receive pending between requests. Foundation otherwise
-    // stops delivering pong/close callbacks after a consumed text message.
-    let task = task
-    Task {
+    // One bounded receive remains pending between requests so Foundation handles controls.
+    Task { [weak self, task] in
       do {
         switch try await task.receive() {
         case .string(let value): result.complete(.success(Data(value.utf8)))
         case .data:
-          result.complete(
-            .failure(RouterFailure("The account returned an unsupported binary response.")))
+          throw RouterFailure("The account returned an unsupported binary response.")
         @unknown default:
-          result.complete(
-            .failure(RouterFailure("The account returned an unknown WebSocket message.")))
+          throw RouterFailure("The account returned an unknown WebSocket message.")
         }
       } catch {
-        result.complete(
-          .failure(RouterTransportFailure(phase: .receive, error: error, closeCode: task.closeCode))
-        )
+        guard let self else { return }
+        result.complete(.failure(self.fail(.receive, error, cause: .transport)))
       }
     }
   }
 
-  private func failure(_ phase: RouterTransportFailure.Phase, _ error: Error)
-    -> RouterTransportFailure
-  {
-    RouterTransportFailure(phase: phase, error: error, closeCode: task.closeCode)
+  private func inPhase(_ error: Error, _ phase: RouterTransportFailure.Phase) -> Error {
+    guard var failure = error as? RouterTransportFailure else { return error }
+    failure.phase = phase
+    return failure
   }
 
-  func close() {
-    task.cancel(with: .goingAway, reason: nil)
-    session.invalidateAndCancel()
-  }
-}
-
-private final class RouterAsyncResult<T: Sendable>: @unchecked Sendable {
-  private let ready = DispatchSemaphore(value: 0)
-  private var result: Result<T, Error>?
-  func complete(_ result: Result<T, Error>) {
-    self.result = result
-    ready.signal()
-  }
-  func wait(seconds: Double, timeout: @autoclosure () -> Error) throws -> T {
-    guard ready.wait(timeout: .now() + seconds) == .success, let result else {
-      throw timeout()
+  private func fail(
+    _ phase: RouterTransportFailure.Phase, _ error: Error, cause: RouterTransportFailure.Cause
+  ) -> Error {
+    let failure: Error
+    if error is RouterTransportFailure || error is RouterFailure {
+      failure = error
+    } else {
+      var transport = RouterTransportFailure(phase: phase, error: error, closeCode: task.closeCode)
+      transport.cause = cause
+      transport.connectionAgeMS = Int((ProcessInfo.processInfo.systemUptime - createdAt) * 1000)
+      failure = transport
     }
-    return try result.get()
+    // Preserve the first cause instead of replacing it with cancellation side effects.
+    let (saved, stopped): (Error, Bool) = stateLock.withLock {
+      if let terminal { return (terminal, false) }
+      terminal = failure
+      incoming.complete(.failure(failure))
+      pendingProbe?.complete(.failure(failure))
+      pendingSend?.complete(.failure(failure))
+      return (failure, true)
+    }
+    if stopped {
+      keeper.cancel()
+      task.cancel(with: .goingAway, reason: nil)
+      session.invalidateAndCancel()
+    }
+    return inPhase(saved, phase)
   }
+
+  func close() { _ = fail(.check, URLError(.cancelled), cause: .localClose) }
 }
 
 /// One receiver detects cancellation while the response worker waits on upstream.

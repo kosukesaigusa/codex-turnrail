@@ -10,6 +10,7 @@ final class RouterRuntime: @unchecked Sendable {
   private let connect: @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream
   private let search: @Sendable (URLRequest) throws -> Data
   private let reportFailure: @Sendable (String) -> Void
+  private let transportLog: RouterTransportLog
 
   convenience init(root: URL, engine: URL, engineVersion: String) throws {
     try self.init(
@@ -30,6 +31,7 @@ final class RouterRuntime: @unchecked Sendable {
     self.reportFailure = reportFailure
     let storage = root.appending(path: "router")
     ledger = try RouterLedger(root: storage)
+    transportLog = RouterTransportLog(root: storage)
     sessionDirectory = storage.appending(path: "sessions/\(UUID().uuidString)")
     try RouterJSON.privateDirectory(sessionDirectory)
     listener = try RouterListener()
@@ -217,6 +219,7 @@ final class RouterRuntime: @unchecked Sendable {
     messages.start(downstream)
     var upstream: (any RouterUpstream)?
     var currentTurn: String?
+    var progress: RouterRequestProgress?
     defer {
       messages.stop()
       upstream?.close()
@@ -224,6 +227,7 @@ final class RouterRuntime: @unchecked Sendable {
     do {
       while let raw = messages.next() {
         currentTurn = nil
+        progress = nil
         let body = try RouterJSON.object(raw)
         let metadata = try RouterRequest.metadata(body)
         let thread = try RouterJSON.text(metadata, "thread_id")
@@ -252,18 +256,27 @@ final class RouterRuntime: @unchecked Sendable {
         try RouterModelCatalog.validate(body, catalog: account.models)
         let connection = try readyConnection(
           upstream, account: account, headers: headers, messages: messages)
+        let reused = upstream?.generation == connection.generation
         upstream = connection
         let fingerprint = try RouterRequest.fingerprint(body, input: input, turn: key)
         let payload = RouterRequest.payload(
           body, input: input, previous: previous, account: accountID,
           generation: connection.generation)
         try ledger.begin(fingerprint, turn: key)
-        try connection.send(RouterJSON.data(payload))
+        guard
+          let kind = RouterTransportObservation.Kind(
+            rawValue: try RouterJSON.text(metadata, "request_kind"))
+        else { throw RouterFailure("Unsupported inference request kind.") }
+        let data = try RouterJSON.data(payload)
+        progress = RouterRequestProgress(
+          kind: kind, connectionReused: reused, requestBytes: data.count)
+        try connection.send(data)
         var output: [[String: Any]] = []
         while true {
           let rawEvent = try connection.receive()
           let event = try RouterJSON.object(rawEvent)
           let type = try RouterJSON.text(event, "type")
+          progress?.received(type: type)
           if ["error", "response.failed", "response.incomplete"].contains(type) {
             throw try RouterServiceFailure(event: event)
           }
@@ -288,7 +301,17 @@ final class RouterRuntime: @unchecked Sendable {
         }
       }
     } catch {
-      reportFailure("Model routing: " + error.localizedDescription)
+      let reported: Error
+      if var failure = error as? RouterTransportFailure {
+        failure.request = progress?.snapshot()
+        do { failure.reference = try transportLog.record(failure) } catch {
+          failure.diagnosticWriteFailed = true
+        }
+        reported = failure
+      } else {
+        reported = error
+      }
+      reportFailure("Model routing: " + reported.localizedDescription)
       if let currentTurn { try? ledger.fail(currentTurn) }
       let code: String
       if let failure = error as? RouterServiceFailure, failure.isMisalignmentPolicyViolation {
@@ -305,7 +328,7 @@ final class RouterRuntime: @unchecked Sendable {
           "type": "error", "status": 400,
           "error": [
             "type": "invalid_request_error", "code": code,
-            "message": error.localizedDescription,
+            "message": reported.localizedDescription,
           ],
         ]))
     }

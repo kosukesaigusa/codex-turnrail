@@ -295,7 +295,7 @@ struct RouterOfficialEngineTests {
         .count == 6)
     #expect(failures.messages.count == 1)
     #expect(failures.messages.first?.hasPrefix("Reconnecting before sending [") == true)
-    backend.failNextRequest()
+    backend.failNextRequest(afterCreated: false)
     let failedStart = try rpc.request(
       "turn/start",
       [
@@ -308,6 +308,17 @@ struct RouterOfficialEngineTests {
     let failedTurn = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
     #expect(failedTurn["status"] as? String == "failed")
     #expect(backend.requests(for: failedID).count == 1)
+    let diagnosticData = try Data(
+      contentsOf: root.url.appending(path: "router/transport-diagnostics.json"))
+    let diagnostic = try #require(
+      RouterJSON.array(RouterJSON.object(diagnosticData), "entries").last)
+    let observation = try RouterJSON.map(diagnostic, "request")
+    #expect(diagnostic["phase"] as? String == "receive")
+    #expect(observation["kind"] as? String == "turn")
+    #expect(observation["receivedEvents"] as? Int == 0)
+    #expect(observation["responseStarted"] as? Bool == false)
+    let reference = try RouterJSON.text(diagnostic, "reference")
+    #expect(failures.messages.last?.contains(reference) == true)
     backend.setTool("text(6 * 7);")
     provider.choose(provider.first.account.id)
     _ = try rpc.request(
@@ -383,6 +394,23 @@ struct RouterOfficialEngineTests {
     #expect(backend.openedAccounts.count == opened + 1)
     #expect(backend.openedAccounts.last == provider.first.account.id)
     backend.allowNewConnections(true)
+    // Compaction can lose its connection after the server acknowledged the request.
+    // Keep that distinction in diagnostics without replaying or switching accounts.
+    backend.failNextRequest(afterCreated: true)
+    _ = try rpc.request("thread/compact/start", ["threadId": thread])
+    let interruptedCompact = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
+    #expect(interruptedCompact["status"] as? String == "failed")
+    let interruptedCalls = backend.requests(for: try RouterJSON.text(interruptedCompact, "id"))
+    #expect(interruptedCalls.count == 1)
+    #expect(interruptedCalls.allSatisfy { $0.account == provider.first.account.id })
+    let compactDiagnosticData = try Data(
+      contentsOf: root.url.appending(path: "router/transport-diagnostics.json"))
+    let compactDiagnostic = try #require(
+      RouterJSON.array(RouterJSON.object(compactDiagnosticData), "entries").last)
+    let compactObservation = try RouterJSON.map(compactDiagnostic, "request")
+    #expect(compactObservation["kind"] as? String == "compaction")
+    #expect(compactObservation["receivedEvents"] as? Int == 1)
+    #expect(compactObservation["responseStarted"] as? Bool == true)
     // Terminal service failures stay visible after compaction and never cause
     // the official Engine to replay the inference or select another account.
     for (event, reason): ([String: Any], String) in [
@@ -524,6 +552,7 @@ private final class FixtureModel: @unchecked Sendable {
   private var tools = Set<String>()
   private var toolSource = "text(6 * 7);"
   private var failNext = false
+  private var emitCreatedBeforeFailure = false
   private var rejection: RouterObject?
   private var epoch = 0
   private var opened: [UUID] = []
@@ -541,7 +570,12 @@ private final class FixtureModel: @unchecked Sendable {
   }
 
   func setTool(_ source: String) { lock.withLock { toolSource = source } }
-  func failNextRequest() { lock.withLock { failNext = true } }
+  func failNextRequest(afterCreated: Bool) {
+    lock.withLock {
+      failNext = true
+      emitCreatedBeforeFailure = afterCreated
+    }
+  }
   func rejectNext(_ event: [String: Any]) { lock.withLock { rejection = RouterObject(event) } }
 
   func requests(for turn: String) -> [Request] {
@@ -560,6 +594,13 @@ private final class FixtureModel: @unchecked Sendable {
       }
       if failNext {
         failNext = false
+        if emitCreatedBeforeFailure {
+          return [
+            try RouterJSON.data([
+              "type": "response.created", "response": ["id": "fixture-interrupted-response"],
+            ])
+          ]
+        }
         return []  // Simulate disconnection after the request reached the server.
       }
       let item: [String: Any]
@@ -623,7 +664,10 @@ private final class FixtureUpstream: RouterUpstream, @unchecked Sendable {
     events = try backend.response(data, account: accountID)
   }
   func receive() throws -> Data {
-    guard !events.isEmpty else { throw RouterFailure("No fixture event.") }
+    guard !events.isEmpty else {
+      throw RouterTransportFailure(
+        phase: .receive, error: URLError(.networkConnectionLost), closeCode: .noStatusReceived)
+    }
     return events.removeFirst()
   }
   func close() {}
