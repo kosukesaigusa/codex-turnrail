@@ -84,7 +84,7 @@ struct RouterOfficialEngineTests {
 
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
-    .timeLimit(.minutes(3)))
+    .timeLimit(.minutes(5)))
   func officialEngineExecutesCodeModeAndTitlesThroughTheNativeRouter() throws {
     let appPath = try #require(
       ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
@@ -464,11 +464,14 @@ struct RouterOfficialEngineTests {
       #expect(rejectedCalls.count == 1)
       #expect(rejectedCalls.allSatisfy { $0.account == provider.first.account.id })
     }
+    rpc.close()
+    try OfficialEngineWaitingFixture.verify(app: app, router: URL(filePath: routerPath))
     if let proof = ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_PROOF"] {
       try RouterJSON.writePrivate(
         RouterJSON.data([
           "code_mode", "account_switch", "title_routing", "approval_accept", "approval_decline",
           "no_replay", "compaction", "failure_recovery", "web_search", "connection_recovery",
+          "model_wait", "model_wait_cancellation", "engine_idle_timeout",
         ]), to: URL(filePath: proof))
     }
   }
@@ -481,7 +484,7 @@ private final class FixtureFailures: @unchecked Sendable {
   func append(_ message: String) { lock.withLock { values.append(message) } }
 }
 
-private final class FixtureAccounts: RouterAccountProviding, @unchecked Sendable {
+final class FixtureAccounts: RouterAccountProviding, @unchecked Sendable {
   let root: URL
   let first: RouterAccountSnapshot
   let second: RouterAccountSnapshot

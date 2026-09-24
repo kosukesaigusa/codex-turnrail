@@ -112,9 +112,9 @@ final class RouterWebSocket: RouterUpstream, @unchecked Sendable {
   func receive() throws -> Data {
     let pending = stateLock.withLock { incoming }
     let data: Data
-    do { data = try pending.wait(seconds: policy.receive, timeout: URLError(.timedOut)) } catch {
-      throw fail(.receive, error, cause: .receiveTimeout)
-    }
+    // Model silence is not a transport failure. Engine cancellation, closure,
+    // or a failed keepalive completes this waiter without replaying inference.
+    do { data = try pending.wait() } catch { throw inPhase(error, .receive) }
     let next = RouterAsyncResult<Data>()
     let shouldRead = stateLock.withLock {
       incoming = next
@@ -129,7 +129,7 @@ final class RouterWebSocket: RouterUpstream, @unchecked Sendable {
   }
 
   private func readNext(_ result: RouterAsyncResult<Data>) {
-    // One bounded receive remains pending between requests so Foundation handles controls.
+    // Buffer one message between requests so Foundation continues handling controls.
     // Foundation callbacks keep I/O independent of threads blocked in synchronous waits.
     task.receive { [weak self] outcome in
       do {
