@@ -96,13 +96,12 @@ final class RouterWebSocket: RouterUpstream, @unchecked Sendable {
       pendingSend = result
     }
     defer { stateLock.withLock { pendingSend = nil } }
-    Task { [weak self, task] in
-      do {
-        try await task.send(.string(String(decoding: data, as: UTF8.self)))
-        result.complete(.success(()))
-      } catch {
+    task.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
+      if let error {
         guard let self else { return }
         result.complete(.failure(self.fail(.send, error, cause: .transport)))
+      } else {
+        result.complete(.success(()))
       }
     }
     do { try result.wait(seconds: policy.send, timeout: URLError(.timedOut)) } catch {
@@ -131,9 +130,10 @@ final class RouterWebSocket: RouterUpstream, @unchecked Sendable {
 
   private func readNext(_ result: RouterAsyncResult<Data>) {
     // One bounded receive remains pending between requests so Foundation handles controls.
-    Task { [weak self, task] in
+    // Foundation callbacks keep I/O independent of threads blocked in synchronous waits.
+    task.receive { [weak self] outcome in
       do {
-        switch try await task.receive() {
+        switch try outcome.get() {
         case .string(let value): result.complete(.success(Data(value.utf8)))
         case .data:
           throw RouterFailure("The account returned an unsupported binary response.")
