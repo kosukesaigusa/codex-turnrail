@@ -96,7 +96,8 @@ private final class TransportServer: @unchecked Sendable {
   func connect() -> RouterWebSocket {
     RouterWebSocket(
       accountID: UUID(),
-      request: URLRequest(url: URL(string: "ws://127.0.0.1:\(listener.port)/fixture")!))
+      request: URLRequest(url: URL(string: "ws://127.0.0.1:\(listener.port)/fixture")!),
+      policy: .live)
   }
 
   func stop() { listener.stop() }
