@@ -9,7 +9,7 @@ struct RouterKeepAliveTests {
   func quietResponseSurvivesPeerIdleDeadlineWithoutReplay() throws {
     let server = try QuietTransportServer(mode: .delayed)
     defer { server.stop() }
-    let client = server.connect(receiveTimeout: 4)
+    let client = server.connect()
     defer { client.close() }
     try client.checkConnection()
     let request = Data(#"{"type":"response.create","input":[]}"#.utf8)
@@ -22,7 +22,7 @@ struct RouterKeepAliveTests {
   func idleConnectionStaysAliveBetweenModelRequests() throws {
     let server = try QuietTransportServer(mode: .echo)
     defer { server.stop() }
-    let client = server.connect(receiveTimeout: 4)
+    let client = server.connect()
     defer { client.close() }
     try client.checkConnection()
     let request = Data(#"{"type":"response.create","input":[]}"#.utf8)
@@ -39,7 +39,7 @@ struct RouterKeepAliveTests {
   func missingPongWakesReceiverAndPreservesTheFirstCause() throws {
     let server = try QuietTransportServer(mode: .stalled)
     defer { server.stop() }
-    let client = server.connect(receiveTimeout: 4)
+    let client = server.connect()
     defer { client.close() }
     try client.checkConnection()
     let request = Data(#"{"type":"response.create","input":[]}"#.utf8)
@@ -66,29 +66,40 @@ struct RouterKeepAliveTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func pongsDoNotExtendTheModelResponseDeadline() throws {
+  func healthyQuietConnectionWaitsForOutputUntilCancelled() throws {
     let server = try QuietTransportServer(mode: .silent)
     defer { server.stop() }
-    let client = server.connect(receiveTimeout: 0.35)
+    let client = server.connect()
     defer { client.close() }
     try client.checkConnection()
     let request = Data(#"{"type":"response.create","input":[]}"#.utf8)
     try client.send(request)
+    try #require(server.requestReceived.wait(timeout: .now() + 2) == .success)
+    let result = RouterAsyncResult<Data>()
+    let finished = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+      result.complete(Result { try client.receive() })
+      finished.signal()
+    }
+    // Multiple heartbeat cycles must neither produce model output nor end the wait.
+    #expect(finished.wait(timeout: .now() + 1.4) == .timedOut)
+    client.close()
+    try #require(finished.wait(timeout: .now() + 2) == .success)
     do {
-      _ = try client.receive()
-      Issue.record("Pongs were mistaken for model output.")
+      _ = try result.wait()
+      Issue.record("The cancelled transport produced a response.")
     } catch let failure as RouterTransportFailure {
       #expect(failure.phase == .receive)
-      #expect(failure.cause == .receiveTimeout)
+      #expect(failure.cause == .localClose)
     }
     #expect(server.requests == [request])
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func localCancellationWakesThePendingReceiverWithoutReplay() throws {
+  func cancelledConnectionRejectsLaterReceiveWithoutReplay() throws {
     let server = try QuietTransportServer(mode: .silent)
     defer { server.stop() }
-    let client = server.connect(receiveTimeout: 4)
+    let client = server.connect()
     try client.checkConnection()
     let request = Data(#"{"type":"response.create","input":[]}"#.utf8)
     try client.send(request)
@@ -148,11 +159,11 @@ private final class QuietTransportServer: @unchecked Sendable {
     }
   }
 
-  func connect(receiveTimeout: TimeInterval) -> RouterWebSocket {
+  func connect() -> RouterWebSocket {
     RouterWebSocket(
       accountID: UUID(),
       request: URLRequest(url: URL(string: "ws://127.0.0.1:\(listener.port)/fixture")!),
-      policy: RouterConnectionPolicy(keepAlive: 0.05, probe: 0.4, send: 1, receive: receiveTimeout))
+      policy: RouterConnectionPolicy(keepAlive: 0.05, probe: 0.4, send: 1))
   }
 
   func stop() {
