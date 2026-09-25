@@ -79,7 +79,7 @@ Render production SwiftUI views using isolated demo accounts:
 TURNRAIL_SCREENSHOT_DIRECTORY=/absolute/review-directory just test-app --filter SettingsScreenshots
 ```
 
-The opt-in renderer writes `switch.png`, `accounts.png`, and `available-resets.png` at double resolution. It uses a temporary registry and injected readers without real credentials or network requests. Inspect the results before replacing documentation images.
+The opt-in renderer writes `folders.png`, `folders-reordered.png`, `folders-version-differs.png`, `accounts.png`, and `available-resets.png` at double resolution. It uses a temporary registry and injected readers without real credentials or network requests. Inspect the results before replacing documentation images.
 
 ## Storage policy
 

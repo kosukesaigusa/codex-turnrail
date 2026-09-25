@@ -4,7 +4,7 @@ A macOS menu bar app for using multiple ChatGPT accounts with Codex in the offic
 
 Keep your Codex conversations as you switch accounts, with automatic account selection for each folder.
 
-![Different folders. Different accounts. Codex Turnrail's Folders screen showing separate account assignments for work and personal projects using demo data](docs/images/01-folder-rules.png)
+![Codex Turnrail's Folders screen showing account priority, remaining usage, reset times, and last-used times using demo data](docs/images/folders.png)
 
 This is an independent project with no affiliation with or endorsement from OpenAI.
 
@@ -28,13 +28,11 @@ Only the app ZIP is needed. No Terminal commands are required.
 
 1. In **Accounts**, select **Add Account** and sign in to your ChatGPT accounts.
 2. In **Folders**, add a folder and assign its permitted accounts.
-3. Review quota and set account priority in **Switch**, then select **Open Codex** to launch ChatGPT with Turnrail's account routing.
-
-![See usage before you switch. Codex Turnrail's Switch screen showing the personal folder's assigned accounts, remaining usage, reset times, and account priority using demo data](docs/images/02-usage-and-priority.png)
+3. Review quota in **Folders**. Use an account's **…** menu to **Move Up**, **Move Down**, or **Prioritize** it. Numbers show the order in which accounts are selected. Then select **Open Codex** to launch ChatGPT with Turnrail's account routing.
 
 Folder rules apply to subfolders. Turnrail selects an available account from the matching rule before each turn. Active turns keep their account; changes apply to the next turn.
 
-**Switch** and **Accounts** show remaining usage, reset times, and last-used times. Select **available resets** to view each saved reset and its expiration date. Reset counts appear only when at least one is available. Reauthentication and account removal are in the **Accounts** menu.
+**Folders** and **Accounts** show remaining usage, reset times, and last-used times. Select **available resets** to view each saved reset and its expiration date. Reset counts appear only when at least one is available. Reauthentication and account removal are in the **Accounts** menu.
 
 ## Conversation data
 

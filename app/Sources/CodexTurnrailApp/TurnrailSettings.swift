@@ -3,7 +3,6 @@ import CodexTurnrailCore
 import SwiftUI
 
 enum SettingsPage: String, CaseIterable, Identifiable {
-  case switchAccount = "Switch"
   case folders = "Folders"
   case accounts = "Accounts"
 
@@ -11,14 +10,9 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
   var symbol: String {
     switch self {
-    case .switchAccount: "arrow.left.arrow.right"
     case .folders: "folder"
     case .accounts: "person.crop.circle"
     }
-  }
-
-  var title: String {
-    self == .switchAccount ? "Switch Account" : rawValue
   }
 }
 
@@ -32,7 +26,7 @@ struct TurnrailSettings: View {
   @ObservedObject var model: TurnrailViewModel
   @Environment(\.openURL) private var openURL
   @Environment(\.timeZone) private var timeZone
-  @State private var page: SettingsPage = .switchAccount
+  @State private var page: SettingsPage = .folders
   @State private var expandedFolders: Set<AccountRoutingScope> = [.defaultRule]
   @State private var accountPendingRemoval: TurnrailAccount?
   @State private var folderPendingRemoval: DirectoryAccountRule?
@@ -43,6 +37,9 @@ struct TurnrailSettings: View {
   init(model: TurnrailViewModel, page: SettingsPage) {
     self.model = model
     self._page = State(initialValue: page)
+    if let firstFolder = model.registryState.routing.directoryRules.first {
+      self._expandedFolders = State(initialValue: [.directory(firstFolder.id)])
+    }
   }
 
   var body: some View {
@@ -51,14 +48,13 @@ struct TurnrailSettings: View {
       Divider()
       VStack(alignment: .leading, spacing: 24) {
         HStack {
-          Text(page.title)
+          Text(page.rawValue)
             .font(.system(size: 30, weight: .semibold))
           Spacer()
           pageAction
         }
 
         switch page {
-        case .switchAccount: switchPage
         case .folders: foldersPage
         case .accounts: accountsPage
         }
@@ -207,19 +203,20 @@ struct TurnrailSettings: View {
   @ViewBuilder
   private var pageAction: some View {
     switch page {
-    case .switchAccount:
-      refreshUsageButton
     case .folders:
-      Button {
-        if let id = model.chooseRoutingDirectory(replacing: nil) {
-          expandedFolders.insert(.directory(id))
+      HStack(spacing: 12) {
+        refreshUsageButton
+        Button {
+          if let id = model.chooseRoutingDirectory(replacing: nil) {
+            expandedFolders.insert(.directory(id))
+          }
+        } label: {
+          Label("Add Folder", systemImage: "plus")
         }
-      } label: {
-        Label("Add Folder", systemImage: "plus")
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(model.registryLoadError != nil)
       }
-      .buttonStyle(.borderedProminent)
-      .controlSize(.large)
-      .disabled(model.registryLoadError != nil)
     case .accounts:
       HStack(spacing: 12) {
         refreshUsageButton
@@ -252,7 +249,7 @@ struct TurnrailSettings: View {
       model.addAccount()
     case .assignAccount:
       page = .folders
-      expandedFolders.insert(model.routingScope)
+      expandedFolders.insert(.defaultRule)
     case .signIn:
       page = .accounts
     case .openCodex:
@@ -269,71 +266,49 @@ struct TurnrailSettings: View {
     return "Signing In…"
   }
 
-  private var switchPage: some View {
-    VStack(alignment: .leading, spacing: 20) {
-      HStack(spacing: 12) {
-        Text("Folder")
-        Picker("Folder", selection: $model.routingScope) {
-          ForEach(model.registryState.routing.directoryRules) { rule in
-            Text(folderLabel(rule.directory)).tag(AccountRoutingScope.directory(rule.id))
-          }
-          Text("Other Folders").tag(AccountRoutingScope.defaultRule)
-        }
-        .labelsHidden()
-        .controlSize(.large)
-        .frame(maxWidth: 400, alignment: .leading)
-        Spacer()
-      }
-      .disabled(model.registryLoadError != nil)
-
-      if model.displayedAccounts.isEmpty {
-        emptyState("No Assigned Accounts", symbol: "person.crop.circle.badge.plus")
-      } else {
-        ScrollView {
-          VStack(spacing: 0) {
-            accountTableHeader
-            ForEach(model.displayedAccounts) { account in
-              Divider()
-              switchAccountRow(account)
-            }
-          }
-          .settingsPanel()
-        }
-      }
-    }
-  }
-
-  private func switchAccountRow(_ account: TurnrailAccount) -> some View {
-    let index = model.ruleAccountIDs.firstIndex(of: account.id)
-    return HStack(spacing: 18) {
+  private func folderAccountRow(
+    _ account: TurnrailAccount, position: Int, count: Int, scope: AccountRoutingScope,
+    folder: String
+  ) -> some View {
+    HStack(spacing: 18) {
+      Text("\(position + 1)")
+        .font(.system(size: 13).monospacedDigit())
+        .foregroundStyle(.secondary)
+        .frame(width: 52, alignment: .center)
+        .accessibilityLabel("Priority \(position + 1)")
       accountIdentity(account)
       usageColumn(account)
       lastUsedColumn(account)
-
-      Group {
-        if index == 0 {
-          Text("Preferred").foregroundStyle(.secondary)
-        } else {
-          Button("Prioritize") {
-            model.selectAccount(id: account.id, scope: model.routingScope)
-          }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.large)
-          .disabled(model.registryLoadError != nil)
-          .accessibilityLabel("Prioritize \(account.email)")
+      Menu {
+        Button("Prioritize") {
+          model.selectAccount(id: account.id, scope: scope)
         }
+        .disabled(position == 0)
+        Divider()
+        Button("Move Up") {
+          model.moveAccount(id: account.id, direction: .up, scope: scope)
+        }
+        .disabled(position == 0)
+        Button("Move Down") {
+          model.moveAccount(id: account.id, direction: .down, scope: scope)
+        }
+        .disabled(position == count - 1)
+        Divider()
+        Button("Unassign") {
+          model.setAccountAllowed(id: account.id, allowed: false, scope: scope)
+        }
+      } label: {
+        Image(systemName: "ellipsis")
+          .frame(width: 24, height: 24)
       }
-      .frame(width: 90)
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .frame(width: 24, height: 24)
+      .accessibilityLabel("Account actions for \(account.email) in \(folder)")
     }
     .padding(.horizontal, 18)
     .padding(.vertical, 18)
-    .contentShape(Rectangle())
-    .contextMenu {
-      Button("Move Up") { model.moveAccount(id: account.id, direction: .up) }
-        .disabled(index == nil || index == 0)
-      Button("Move Down") { model.moveAccount(id: account.id, direction: .down) }
-        .disabled(index == nil || index == model.ruleAccountIDs.count - 1)
-    }
   }
 
   private var foldersPage: some View {
@@ -377,6 +352,7 @@ struct TurnrailSettings: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title), \(ids.count) accounts")
+        .accessibilityValue(expandedFolders.contains(scope) ? "Expanded" : "Collapsed")
         if let rule {
           Menu {
             Button("Change Folder") {
@@ -395,19 +371,15 @@ struct TurnrailSettings: View {
       .padding(18)
 
       if expandedFolders.contains(scope) {
-        ForEach(ids, id: \.self) { id in
+        if !ids.isEmpty {
+          Divider()
+          accountTableHeader(showsPriority: true)
+        }
+        ForEach(Array(ids.enumerated()), id: \.element) { position, id in
           if let account = model.registryState.accounts.first(where: { $0.id == id }) {
             Divider()
-            HStack(spacing: 12) {
-              AccountIdentityLabel(account: account)
-              Spacer()
-              Button("Unassign") {
-                model.setAccountAllowed(id: id, allowed: false, scope: scope)
-              }
-              .accessibilityLabel("Unassign \(account.email) from \(title)")
-            }
-            .padding(.horizontal, 48)
-            .padding(.vertical, 14)
+            folderAccountRow(
+              account, position: position, count: ids.count, scope: scope, folder: title)
           }
         }
         Divider()
@@ -439,7 +411,7 @@ struct TurnrailSettings: View {
       } else {
         ScrollView {
           VStack(spacing: 0) {
-            accountTableHeader
+            accountTableHeader(showsPriority: false)
             ForEach(model.registryState.accounts) { account in
               Divider()
               HStack(spacing: 18) {
@@ -464,7 +436,7 @@ struct TurnrailSettings: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .frame(width: 90, alignment: .trailing)
+                .frame(width: 24, height: 24)
                 .accessibilityLabel("Account actions for \(account.email)")
               }
               .font(.system(size: 13))
@@ -487,12 +459,15 @@ struct TurnrailSettings: View {
     .disabled(model.isRefreshingAccounts)
   }
 
-  private var accountTableHeader: some View {
+  private func accountTableHeader(showsPriority: Bool) -> some View {
     HStack(spacing: 18) {
+      if showsPriority {
+        Text("Priority").frame(width: 52, alignment: .center)
+      }
       Text("Account").frame(maxWidth: .infinity, alignment: .leading)
       Text("Usage").frame(width: 270, alignment: .leading)
       Text("Last used").frame(width: 82, alignment: .leading)
-      Color.clear.frame(width: 90, height: 1)
+      Color.clear.frame(width: 24, height: 1)
     }
     .font(.system(size: 13, weight: .medium))
     .foregroundStyle(.secondary)
@@ -532,7 +507,7 @@ struct TurnrailSettings: View {
   private func usageColumn(_ account: TurnrailAccount) -> some View {
     Group {
       if model.accountIssue(for: account) != nil {
-        if page == .switchAccount {
+        if page == .folders {
           Button("Usage unavailable") { page = .accounts }
             .buttonStyle(.link)
         } else {
@@ -624,23 +599,6 @@ struct TurnrailSettings: View {
     .foregroundStyle(.secondary)
     .frame(maxWidth: .infinity)
     .padding(.vertical, 64)
-  }
-}
-
-private struct AccountIdentityLabel: View {
-  let account: TurnrailAccount
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 5) {
-      Text(account.email)
-        .font(.system(size: 14))
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .textSelection(.enabled)
-      Text(account.planType.displayName)
-        .font(.system(size: 12))
-        .foregroundStyle(.secondary)
-    }
   }
 }
 
