@@ -1,5 +1,11 @@
 # Verification
 
+## WebSocket connection-limit recovery
+
+The September 26, 2026 regression reproduces `websocket_connection_limit_reached` with the signed official Engine from ChatGPT `26.917.71314 (10954)`, synthetic accounts, and a local model fixture. Before the correction, an explicit rejection after a completed tool call stopped the turn with `turnrail_routing_stopped`.
+
+The corrected fixture completes the same turn through a new connection, restores the completed tool output, and executes the marker command exactly once. Changing account priority during rejection does not change the bound account. Manual compaction also recovers. A second rejection on the replacement connection and a rejection after `response.created` remain terminal, and subsequent user turns still use WebSockets successfully. Ledger tests verify that confirmed rejection survives restart while an interrupted resubmission remains blocked. Existing 181-second waiting, cancellation, and official idle-timeout scenarios pass. This is isolated runtime evidence; real-service recurrence and the complete released desktop UI require separate observation.
+
 ## Official Engine integration status
 
 The September 22-23, 2026 integration moves account routing into the Swift product and uses the unmodified, OpenAI-signed Engine and Host in the supported ChatGPT app. The installed app bundles have not been replaced. Hosted CI, notarization, and distribution of this integration remain pending.

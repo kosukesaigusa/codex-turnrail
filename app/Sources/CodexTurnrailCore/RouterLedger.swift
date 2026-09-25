@@ -31,7 +31,7 @@ final class RouterLedger: @unchecked Sendable {
         }
         var failed = try RouterJSON.map(state, "failed")
         for case let request as [String: Any] in try RouterJSON.map(state, "requests").values {
-          if request["state"] as? String == "forwarding" {
+          if ["forwarding", "retrying"].contains(request["state"] as? String) {
             failed[try RouterJSON.text(request, "turn")] = true
           }
         }
@@ -185,11 +185,33 @@ final class RouterLedger: @unchecked Sendable {
       guard try bound(turn) != nil else {
         throw RouterFailure("Inference requires an immutable account binding.")
       }
-      guard try RouterJSON.map(state, "requests")[fingerprint] == nil else {
-        throw RouterFailure(
-          "This inference request was already submitted; automatic replay is forbidden.")
+      let next: String
+      if let request = try RouterJSON.map(state, "requests")[fingerprint] {
+        guard let request = request as? [String: Any], request["turn"] as? String == turn,
+          request["state"] as? String == "connection_limited"
+        else {
+          throw RouterFailure(
+            "This inference request was already submitted; automatic replay is forbidden.")
+        }
+        next = "retrying"
+      } else {
+        next = "forwarding"
       }
-      try put("requests", fingerprint, ["turn": turn, "state": "forwarding"])
+      try put("requests", fingerprint, ["turn": turn, "state": next])
+      try persist()
+    }
+  }
+
+  /// Records an explicit pre-response rejection, permitting one Engine-owned resubmission.
+  func rejectConnectionLimit(_ fingerprint: String, turn: String) throws {
+    try lock.withLock {
+      guard let request = try RouterJSON.map(state, "requests")[fingerprint] as? [String: Any],
+        request["turn"] as? String == turn, request["state"] as? String == "forwarding"
+      else {
+        throw RouterFailure(
+          "Cannot recover this request from another WebSocket connection limit. Start a new turn.")
+      }
+      try put("requests", fingerprint, ["turn": turn, "state": "connection_limited"])
       try persist()
     }
   }
@@ -206,7 +228,8 @@ final class RouterLedger: @unchecked Sendable {
   func finish(_ fingerprint: String, turn: String) throws {
     try lock.withLock {
       guard let request = try RouterJSON.map(state, "requests")[fingerprint] as? [String: Any],
-        request["turn"] as? String == turn, request["state"] as? String == "forwarding"
+        request["turn"] as? String == turn,
+        ["forwarding", "retrying"].contains(request["state"] as? String)
       else { throw RouterFailure("Cannot complete a request that was not submitted by this turn.") }
       try put("requests", fingerprint, ["turn": turn, "state": "completed"])
       try persist()

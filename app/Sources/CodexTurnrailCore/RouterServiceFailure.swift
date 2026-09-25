@@ -4,6 +4,7 @@ import Foundation
 struct RouterServiceFailure: LocalizedError, Sendable {
   let description: String
   let isMisalignmentPolicyViolation: Bool
+  let isWebSocketConnectionLimit: Bool
   var errorDescription: String? { description }
 
   init(event: [String: Any]) throws {
@@ -30,6 +31,10 @@ struct RouterServiceFailure: LocalizedError, Sendable {
     }
     isMisalignmentPolicyViolation =
       type != "response.incomplete" && detail["code"] as? String == "misalignment_policy_violation"
+    isWebSocketConnectionLimit =
+      type == "error" && event["status"] as? Int == 400
+      && detail["type"] as? String == "invalid_request_error"
+      && detail["code"] as? String == "websocket_connection_limit_reached"
     var diagnostics = [type]
     if let status = event["status"] as? Int, (400...599).contains(status) {
       diagnostics.append("HTTP \(status)")
@@ -45,6 +50,17 @@ struct RouterServiceFailure: LocalizedError, Sendable {
     description =
       summary + " [" + diagnostics.joined(separator: "; ") + "] "
       + "No account switch or inference replay was attempted."
+  }
+
+  /// Retains the official Engine's retry classification without exposing server text or headers.
+  static var connectionLimitRetryEvent: [String: Any] {
+    [
+      "type": "error", "status": 400,
+      "error": [
+        "type": "invalid_request_error", "code": "websocket_connection_limit_reached",
+        "message": "The WebSocket connection expired. Reconnect using the bound account.",
+      ],
+    ]
   }
 
   // Only protocol-defined identifiers may enter the desktop error and saved rollout.
