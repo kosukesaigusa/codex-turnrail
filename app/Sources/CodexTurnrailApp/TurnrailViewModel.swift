@@ -93,14 +93,7 @@ final class TurnrailViewModel: ObservableObject {
   }
 
   @Published private(set) var state: State = .checking
-  @Published private(set) var registryState: AccountRegistryState = .empty {
-    didSet { refreshRoutingScope() }
-  }
-  @Published var routingScope: AccountRoutingScope = .defaultRule {
-    didSet { refreshRoutingScope() }
-  }
-  @Published private(set) var ruleAccountIDs: [UUID] = []
-  @Published private(set) var displayedAccounts: [TurnrailAccount] = []
+  @Published private(set) var registryState: AccountRegistryState = .empty
   @Published private(set) var accountError: String?
   @Published private(set) var registryLoadError: String?
   @Published private(set) var authStatusByAccountID: [UUID: AccountAuthStatus] = [:]
@@ -245,7 +238,6 @@ final class TurnrailViewModel: ObservableObject {
       registryLoadError = error.localizedDescription
       accountError = error.localizedDescription
     }
-    refreshRoutingScope()
     refreshLastUsed()
   }
 
@@ -660,23 +652,6 @@ final class TurnrailViewModel: ObservableObject {
     }.value
   }
 
-  private func refreshRoutingScope() {
-    do {
-      let ids = try registryState.routing.accountIDs(in: routingScope)
-      var ordered: [TurnrailAccount] = []
-      for id in ids {
-        guard let account = registryState.accounts.first(where: { $0.id == id }) else {
-          throw AccountRegistryError.unknownAccount(id)
-        }
-        ordered.append(account)
-      }
-      ruleAccountIDs = ids
-      displayedAccounts = ordered
-    } catch {
-      accountError = error.localizedDescription
-    }
-  }
-
   private func updateRouting(
     _ change: (AccountRoutingConfiguration) throws -> AccountRoutingConfiguration
   ) {
@@ -699,8 +674,8 @@ final class TurnrailViewModel: ObservableObject {
     updateRouting { try $0.settingAllowed(allowed, accountID: id, in: scope) }
   }
 
-  func moveAccount(id: UUID, direction: AccountMoveDirection) {
-    updateRouting { try $0.moving(accountID: id, direction: direction, in: routingScope) }
+  func moveAccount(id: UUID, direction: AccountMoveDirection, scope: AccountRoutingScope) {
+    updateRouting { try $0.moving(accountID: id, direction: direction, in: scope) }
   }
 
   func chooseRoutingDirectory(replacing ruleID: UUID?) -> UUID? {
@@ -720,14 +695,12 @@ final class TurnrailViewModel: ObservableObject {
       updateRouting { try $0.addingDirectory(url, id: id) }
     }
     if registryState.routing.directoryRules.contains(where: { $0.id == id }) {
-      routingScope = .directory(id)
       return id
     }
     return nil
   }
 
   func removeRoutingDirectory(id: UUID) {
-    if routingScope == .directory(id) { routingScope = .defaultRule }
     updateRouting { try $0.removingDirectory(id: id) }
   }
 

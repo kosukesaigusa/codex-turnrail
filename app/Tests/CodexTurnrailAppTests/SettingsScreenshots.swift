@@ -31,7 +31,9 @@ struct SettingsScreenshots {
     let rule = DirectoryAccountRule(
       id: UUID(), directory: "/Projects/work", accountIDs: state.accounts.map(\.id))
     state = try store.updateRouting(
-      AccountRoutingConfiguration(defaultAccountIDs: [], directoryRules: [rule]), in: state)
+      AccountRoutingConfiguration(
+        defaultAccountIDs: Array(state.accounts.dropFirst().map(\.id)), directoryRules: [rule]),
+      in: state)
     let accounts = state.accounts
     let resetData = Data(
       #"{"availableCount":2,"credits":[{"id":"oct-5","resetType":"codexRateLimits","status":"available","grantedAt":1788883200,"expiresAt":1791214500,"title":"Full reset"},{"id":"oct-4","resetType":"codexRateLimits","status":"available","grantedAt":1788796800,"expiresAt":1791133320,"title":"Full reset"}]}"#
@@ -83,14 +85,18 @@ struct SettingsScreenshots {
       }
     )
     model.refreshCompatibility()
-    model.routingScope = .directory(rule.id)
     await model.refreshAllAuthStatuses()
-    for page in [SettingsPage.switchAccount, .accounts] {
-      let name = page == .switchAccount ? "switch" : "accounts"
+    for page in SettingsPage.allCases {
+      let name = page.rawValue.lowercased()
       try render(
         TurnrailSettings(model: model, page: page),
         size: NSSize(width: 1120, height: 740), to: output.appending(path: "\(name).png"))
     }
+    model.moveAccount(id: accounts[2].id, direction: .up, scope: .directory(rule.id))
+    try render(
+      TurnrailSettings(model: model, page: .folders),
+      size: NSSize(width: 1120, height: 740),
+      to: output.appending(path: "folders-reordered.png"))
     try render(
       AccountResetCreditsSheet(account: accounts[1], model: model),
       size: NSSize(width: 460, height: 340), to: output.appending(path: "available-resets.png"))
@@ -101,9 +107,9 @@ struct SettingsScreenshots {
     versionReport = CompatibilityReport(installed: installed, engineVersion: installed.cliVersion)
     model.refreshCompatibility()
     try render(
-      TurnrailSettings(model: model, page: .switchAccount),
+      TurnrailSettings(model: model, page: .folders),
       size: NSSize(width: 1120, height: 740),
-      to: output.appending(path: "switch-version-differs.png"))
+      to: output.appending(path: "folders-version-differs.png"))
   }
 
   private func render(_ content: some View, size: NSSize, to url: URL) throws {

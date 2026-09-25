@@ -66,7 +66,7 @@ The normal `~/.codex` history is shared. The router additionally retains private
 
 ## Settings and usage
 
-**Switch** compares usage and changes priority. **Folders** edits assignments. **Accounts** manages sign-in and removal. Both account lists share **Account**, **Usage**, and **Last used** columns. Positive saved-reset counts open details; zero adds no row or spacing. Authentication and account actions remain in **Accounts**. The interface is English.
+**Folders** groups assigned accounts by folder and shows their numbered priority, usage, and last-used times. Each account's visible ellipsis menu offers **Prioritize**, **Move Up**, **Move Down**, and **Unassign**. Moving up is disabled for the first account; moving down is disabled for the last. Reordering changes only that folder's saved order and applies to the next turn. The first folder starts expanded; other folders can be expanded independently. **Accounts** shares the usage presentation and manages sign-in and removal. Positive saved-reset counts open details; zero adds no row or spacing. Authentication and account removal remain in **Accounts**. The interface is English.
 
 Settings refreshes identity and quota approximately every 60 seconds, on activation and wake, and on manual request. Full-account refreshes do not overlap. Operation IDs invalidate stale results after reauthentication or removal. Errors replace previous values explicitly.
 
