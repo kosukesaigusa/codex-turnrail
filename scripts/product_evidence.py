@@ -12,6 +12,7 @@ SCENARIOS = {
     "approval_decline",
     "no_replay",
     "connection_recovery",
+    "connection_limit_recovery",
     "compaction",
     "failure_recovery",
     "web_search",

@@ -464,6 +464,8 @@ struct RouterOfficialEngineTests {
       #expect(rejectedCalls.count == 1)
       #expect(rejectedCalls.allSatisfy { $0.account == provider.first.account.id })
     }
+    try OfficialEngineConnectionLimitFixture.verify(
+      rpc: rpc, backend: backend, provider: provider, root: root.url)
     rpc.close()
     try OfficialEngineWaitingFixture.verify(app: app, router: URL(filePath: routerPath))
     if let proof = ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_PROOF"] {
@@ -472,6 +474,7 @@ struct RouterOfficialEngineTests {
           "code_mode", "account_switch", "title_routing", "approval_accept", "approval_decline",
           "no_replay", "compaction", "failure_recovery", "web_search", "connection_recovery",
           "model_wait", "model_wait_cancellation", "engine_idle_timeout",
+          "connection_limit_recovery",
         ]), to: URL(filePath: proof))
     }
   }
@@ -544,7 +547,7 @@ private final class FixtureSearch: @unchecked Sendable {
   }
 }
 
-private final class FixtureModel: @unchecked Sendable {
+final class FixtureModel: @unchecked Sendable {
   struct Request: Sendable {
     let account: UUID
     let body: RouterObject
@@ -557,6 +560,10 @@ private final class FixtureModel: @unchecked Sendable {
   private var failNext = false
   private var emitCreatedBeforeFailure = false
   private var rejection: RouterObject?
+  private var rejectionDelay = 0
+  private var rejectionCount = 0
+  private var rejectionAfterCreated = false
+  private var onRejection: (@Sendable () -> Void)?
   private var epoch = 0
   private var opened: [UUID] = []
   private var acceptingConnections = true
@@ -579,7 +586,22 @@ private final class FixtureModel: @unchecked Sendable {
       emitCreatedBeforeFailure = afterCreated
     }
   }
-  func rejectNext(_ event: [String: Any]) { lock.withLock { rejection = RouterObject(event) } }
+  func rejectNext(_ event: [String: Any]) {
+    reject(event, after: 0, count: 1, afterCreated: false, onRejection: {})
+  }
+
+  func reject(
+    _ event: [String: Any], after: Int, count: Int, afterCreated: Bool,
+    onRejection: @escaping @Sendable () -> Void
+  ) {
+    lock.withLock {
+      rejection = RouterObject(event)
+      rejectionDelay = after
+      rejectionCount = count
+      rejectionAfterCreated = afterCreated
+      self.onRejection = onRejection
+    }
+  }
 
   func requests(for turn: String) -> [Request] {
     lock.withLock { received.filter { $0.turn == turn } }
@@ -591,10 +613,20 @@ private final class FixtureModel: @unchecked Sendable {
       let metadata = try RouterRequest.metadata(body)
       let turn = try RouterJSON.text(metadata, "turn_id")
       received.append(Request(account: account, body: RouterObject(body), turn: turn))
-      if let rejection {
-        self.rejection = nil
-        return [try RouterJSON.data(rejection.value)]
+      if let rejection, rejectionDelay == 0 {
+        rejectionCount -= 1
+        if rejectionCount == 0 { self.rejection = nil }
+        onRejection?()
+        var events: [[String: Any]] = []
+        if rejectionAfterCreated {
+          events.append([
+            "type": "response.created", "response": ["id": "fixture-rejected-response"],
+          ])
+        }
+        events.append(rejection.value)
+        return try events.map(RouterJSON.data)
       }
+      if rejectionDelay > 0 { rejectionDelay -= 1 }
       if failNext {
         failNext = false
         if emitCreatedBeforeFailure {

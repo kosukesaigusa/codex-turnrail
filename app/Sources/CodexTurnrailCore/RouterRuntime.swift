@@ -278,7 +278,17 @@ final class RouterRuntime: @unchecked Sendable {
           let type = try RouterJSON.text(event, "type")
           progress?.received(type: type)
           if ["error", "response.failed", "response.incomplete"].contains(type) {
-            throw try RouterServiceFailure(event: event)
+            let failure = try RouterServiceFailure(event: event)
+            if failure.isWebSocketConnectionLimit, progress?.snapshot().receivedEvents == 1 {
+              // The service explicitly rejected this request before any response.
+              // Let the Engine retry it once; closing both sockets forces a new
+              // generation with full known history and the same account binding.
+              try ledger.rejectConnectionLimit(fingerprint, turn: key)
+              try downstream.frame(RouterJSON.data(RouterServiceFailure.connectionLimitRetryEvent))
+              currentTurn = nil
+              return
+            }
+            throw failure
           }
           if type == "response.output_item.done" {
             output.append(try RouterJSON.map(event, "item"))
