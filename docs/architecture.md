@@ -2,7 +2,9 @@
 
 ## Runtime boundary
 
-Codex Turnrail combines a Swift menu bar app with a local account router. **Open Codex** starts the installed official ChatGPT app with `CODEX_CLI_PATH` pointing to `CodexTurnrailRouter`. The router verifies the official installation and starts its unmodified `Contents/Resources/codex` executable. Code Mode uses the official Host in the same installation. Turnrail does not replace, copy, or re-sign official binaries.
+Codex Turnrail combines a Swift menu bar app with a local account router. **Open Codex** starts the installed official ChatGPT app with `CODEX_CLI_PATH` pointing to `CodexTurnrailRouter`. The router verifies the official installation and starts its unmodified launcher. Code Mode uses the official Host in the same installation. Turnrail does not replace, copy, or re-sign official binaries.
+
+Runtime discovery recognizes two explicit layouts: the CLI and Host directly under `Contents/Resources`, or the version-1 `Contents/Resources/codex-cli` package. The package manifest must declare the supported ARM64 target, variant, and paths. Its `bin/codex` launcher starts `CodexCLI.app/Contents/MacOS/codex`; the Host is in `bin/codex-code-mode-host`. The app's signed resource seal protects the manifest and launcher script, while the nested CLI bundle, actual executable, and Host receive separate signature checks before execution. The reported CLI version must match the manifest. Missing components, unknown or simultaneous layouts, and paths resolving outside the app are errors. Settings, authentication, routing, and desktop helpers all use the resolved official launcher.
 
 The router relays the app-server stdio protocol and adds process-local routing configuration. Normal ChatGPT launches use the official configuration. Closing Turnrail Settings does not stop the router or the Engine already serving ChatGPT. The router owns its Engine process group; shutdown targets only that group and its local connections.
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import verify_official_runtime
+from official_runtime import LAYOUT_FILES
 from product_evidence import SCENARIOS, verify_report
 from project_metadata import ROOT, cli_version, read_upstream
 
@@ -21,6 +22,11 @@ def report_fixture():
             "cli_version": cli_version(metadata),
             "signing_team": "2DC432GLL2",
             "binaries": {"codex": "a" * 64, "codex-code-mode-host": "b" * 64},
+            "layout": "flat",
+            "files": {
+                "Contents/Resources/codex": "a" * 64,
+                "Contents/Resources/codex-code-mode-host": "b" * 64,
+            },
         },
         "router_sha256": "c" * 64,
         "scenarios": [{"case": name, "passed": True} for name in sorted(SCENARIOS)],
@@ -28,6 +34,32 @@ def report_fixture():
 
 
 class ProductEvidenceTests(unittest.TestCase):
+    def test_packaged_evidence_requires_launcher_manifest_and_actual_binary_hashes(
+        self,
+    ):
+        valid = report_fixture()
+        engine = valid["official_engine"]
+        engine["layout"] = "packageV1"
+        paths = LAYOUT_FILES["packageV1"]
+        engine["files"] = {path: "d" * 64 for path in paths.values()}
+        engine["files"][paths["executable"]] = engine["binaries"]["codex"]
+        engine["files"][paths["host"]] = engine["binaries"]["codex-code-mode-host"]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            path.write_text(json.dumps(valid))
+            self.assertEqual(verify_report(path), valid)
+            for field in paths:
+                invalid = copy.deepcopy(valid)
+                del invalid["official_engine"]["files"][paths[field]]
+                path.write_text(json.dumps(invalid))
+                with self.assertRaises(ValueError):
+                    verify_report(path)
+            invalid = copy.deepcopy(valid)
+            invalid["official_engine"]["binaries"]["codex"] = "d" * 64
+            path.write_text(json.dumps(invalid))
+            with self.assertRaises(ValueError):
+                verify_report(path)
+
     def test_report_requires_all_scenarios_once_and_valid_binary_hashes(self):
         valid = report_fixture()
         missing = copy.deepcopy(valid)

@@ -120,20 +120,22 @@ public struct CompatibilityProbe {
   }
 
   public func probe(appURL: URL, engineURL: URL) throws -> CompatibilityReport {
-    let installed = try inspectInstallation(appURL: appURL)
-    let engineVersion = try readVersion(
-      executableURL: engineURL,
-      unavailableError: .engineUnavailable(engineURL.path)
-    )
+    let paths = try OfficialRuntimePaths.resolve(app: appURL)
+    guard engineURL.resolvingSymlinksInPath().standardizedFileURL == paths.launcher else {
+      throw RouterFailure("The selected Engine is not the official ChatGPT launcher.")
+    }
+    let installed = try inspectInstallation(appURL: appURL, paths: paths)
 
     return CompatibilityReport(
       installed: installed,
-      engineVersion: engineVersion,
+      engineVersion: installed.cliVersion,
       reference: contract
     )
   }
 
-  private func inspectInstallation(appURL: URL) throws -> CodexInstallation {
+  private func inspectInstallation(appURL: URL, paths: OfficialRuntimePaths) throws
+    -> CodexInstallation
+  {
     var isDirectory: ObjCBool = false
     guard fileManager.fileExists(atPath: appURL.path, isDirectory: &isDirectory),
       isDirectory.boolValue
@@ -159,11 +161,16 @@ public struct CompatibilityProbe {
     let bundleIdentifier = try requiredString("CFBundleIdentifier", in: plist)
     let appVersion = try requiredString("CFBundleShortVersionString", in: plist)
     let appBuild = try requiredString("CFBundleVersion", in: plist)
-    let cliURL = appURL.appending(path: "Contents/Resources/codex")
+    let cliURL = paths.launcher
     let cliVersion = try readVersion(
       executableURL: cliURL,
       unavailableError: .bundledCLIUnavailable(cliURL.path)
     )
+    if let packageVersion = paths.packageVersion,
+      cliVersion != "codex-cli \(packageVersion)"
+    {
+      throw RouterFailure("The official Engine version does not match its package manifest.")
+    }
 
     return CodexInstallation(
       bundleIdentifier: bundleIdentifier,

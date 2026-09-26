@@ -187,8 +187,7 @@ final class TurnrailViewModel: ObservableObject {
     }
     let engineURLResult = Result {
       let app = URL(filePath: "/Applications/ChatGPT.app")
-      try OfficialEngineInstallation.verify(app: app)
-      return app.appending(path: "Contents/Resources/codex")
+      return try OfficialEngineInstallation.verify(app: app).paths.launcher
     }
     let registryStoreResult = Result {
       AccountRegistryStore(rootURL: try TurnrailApplicationSupport.rootURL())

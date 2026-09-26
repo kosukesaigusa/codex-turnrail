@@ -1,5 +1,13 @@
 # Verification
 
+## Official runtime package layout
+
+The September 26, 2026 layout verification covers ChatGPT `26.917.71314 (10954)` with its flat CLI layout and `26.924.20706 (11431)` with the version-1 `codex-cli` package and CLI `0.158.0-alpha.2`. Both signed official runtimes pass all 14 routing scenarios against synthetic accounts and a local model, including Code Mode, title routing, account changes, approvals, compaction, connection recovery, web search, and long-response waiting. Separate official-runtime tests pass authentication inspection without credential rewriting and configuration/policy reads through both desktop-helper paths.
+
+The package's launcher is a script protected by the outer app's resource seal. The nested `CodexCLI.app` has code-signing identifier `codex`, distinct from its Info.plist bundle identifier. Strict signature checks of the outer app, nested CLI bundle, actual CLI executable, and Host pass before launcher execution. Runtime reports record the layout and hashes of the actual executables, launcher, and manifest. Boundary tests reject unknown, simultaneous, incomplete, escaping, or unsigned layouts and inconsistent manifest versions. Candidate ZIP inspection also covers the packaged layout without a flat CLI present.
+
+Swift and Python suites, formatting, documentation lint, and metadata checks pass locally. After updating the release reference, the installed older app still passes official authentication initialization without a version-match requirement. Installed applications and real account data were not changed. Desktop UI, real-service behavior, hosted CI, and signed distribution of this change remain separate checks; local review was performed by the implementing agent.
+
 ## WebSocket connection-limit recovery
 
 The September 26, 2026 regression reproduces `websocket_connection_limit_reached` with the signed official Engine from ChatGPT `26.917.71314 (10954)`, synthetic accounts, and a local model fixture. Before the correction, an explicit rejection after a completed tool call stopped the turn with `turnrail_routing_stopped`.
