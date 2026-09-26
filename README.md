@@ -14,7 +14,7 @@ Requires an Apple silicon Mac running macOS 14 or later and the official ChatGPT
 
 The indicator at the bottom of Settings is green when your ChatGPT version matches the release reference and yellow when it differs. Click it for version details and **See releases**. A version difference does not prevent launch.
 
-1. [Download Codex Turnrail for macOS (Apple silicon)](https://github.com/kosukesaigusa/codex-turnrail/releases/download/v0.12.0/Codex-Turnrail-v0.12.0-macos-arm64.zip).
+1. [Download Codex Turnrail for macOS (Apple silicon)](https://github.com/kosukesaigusa/codex-turnrail/releases/download/v0.12.1/Codex-Turnrail-v0.12.1-macos-arm64.zip).
 2. Double-click the ZIP, then drag `Codex Turnrail.app` into **Applications**.
 3. Quit ChatGPT if it is running, open **Codex Turnrail**, and click the version indicator near the bottom of the sidebar for details.
 
