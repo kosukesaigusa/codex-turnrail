@@ -11,37 +11,35 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from official_runtime import LAYOUT_FILES, resolve_runtime
 from project_metadata import ROOT, cli_version, read_upstream, validate_cli_version
 from runtime_evidence import sha256
 from upstream_watch import download_app_file
 
-OFFICIAL_BINARIES = ("codex", "codex-code-mode-host")
+
+def verify_signature(target, identifier):
+    requirement = 'anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2"'
+    if identifier is not None:
+        requirement += f' and identifier "{identifier}"'
+    subprocess.run(
+        [
+            "codesign",
+            "--verify",
+            "--deep",
+            "--strict",
+            "-R=" + requirement,
+            str(target),
+        ],
+        check=True,
+        timeout=120,
+    )
 
 
 def inspect(app, expected):
     """Inspect a signed app candidate without depending on a public CLI release."""
     app = app.resolve(strict=True)
-    for target in (
-        app,
-        *(app / "Contents/Resources" / name for name in OFFICIAL_BINARIES),
-    ):
-        requirement = (
-            'anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2"'
-        )
-        if target == app:
-            requirement += ' and identifier "com.openai.codex"'
-        subprocess.run(
-            [
-                "codesign",
-                "--verify",
-                "--deep",
-                "--strict",
-                "-R=" + requirement,
-                str(target),
-            ],
-            check=True,
-            timeout=120,
-        )
+    # The enclosing resource seal authenticates the package manifest and launcher.
+    verify_signature(app, "com.openai.codex")
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     if (
         info["CFBundleIdentifier"],
@@ -55,10 +53,20 @@ def inspect(app, expected):
         raise ValueError(
             "The official app metadata does not match the expected version and build."
         )
+    runtime = resolve_runtime(app)
+    for target, identifier in runtime.signature_targets:
+        verify_signature(target, identifier)
     version = subprocess.check_output(
-        [str(app / "Contents/Resources/codex"), "--version"], text=True, timeout=30
+        [str(runtime.launcher), "--version"], text=True, timeout=30
     ).strip()
     validate_cli_version(version)
+    if (
+        runtime.package_version is not None
+        and version != "codex-cli " + runtime.package_version
+    ):
+        raise ValueError(
+            "The official Engine version does not match its package manifest."
+        )
     return {
         "app": {
             "bundle_identifier": info["CFBundleIdentifier"],
@@ -68,9 +76,11 @@ def inspect(app, expected):
         },
         "cli_version": version,
         "signing_team": "2DC432GLL2",
-        "binaries": {
-            name: sha256(app / "Contents/Resources" / name)
-            for name in OFFICIAL_BINARIES
+        "layout": runtime.layout,
+        "binaries": {name: sha256(path) for name, path in runtime.binaries.items()},
+        "files": {
+            relative: sha256(app / relative)
+            for relative in set(LAYOUT_FILES[runtime.layout].values())
         },
     }
 

@@ -11,7 +11,7 @@ struct RouterOfficialEngineTests {
     let app = URL(
       filePath: try #require(
         ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"]))
-    try OfficialEngineInstallation.verify(app: app)
+    let installed = try OfficialEngineInstallation.verify(app: app)
     let root = try RouterTestDirectory()
     let authFile = root.url.appending(path: "auth.json")
     let auth = try RouterJSON.data(["OPENAI_API_KEY": "SYNTHETIC_AUTH_PROTOCOL_TEST"])
@@ -20,7 +20,7 @@ struct RouterOfficialEngineTests {
       .contentModificationDate
     for _ in 0..<3 {
       let rpc = try OfficialEngineRPC(
-        engine: app.appending(path: "Contents/Resources/codex"), home: root.url,
+        engine: installed.paths.launcher, home: root.url,
         overrides: ["cli_auth_credentials_store=\"file\""])
       defer { rpc.close() }
       let status = try rpc.request(
@@ -43,20 +43,20 @@ struct RouterOfficialEngineTests {
     let routerPath = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
     let app = URL(filePath: appPath)
     let installed = try OfficialEngineInstallation.verify(app: app)
-    let engine = app.appending(path: "Contents/Resources/codex")
+    let engine = installed.paths.launcher
     let root = try RouterTestDirectory()
     let helper: [String: Any] = ["env": ["CODEX_CLI_PATH": routerPath]]
     let prepared: [String: Any]
     if source == "plugin" {
       let file = root.url.appending(
         path: "plugins/cache/openai-bundled/unified-computer-use/"
-          + installed.appVersion + "/.mcp.json")
+          + installed.identity.appVersion + "/.mcp.json")
       try FileManager.default.createDirectory(
         at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
       try RouterJSON.writePrivate(RouterJSON.data(["mcpServers": ["cua_repl": helper]]), to: file)
       try RouterHelperConfiguration.synchronizePlugin(
         home: root.url, router: URL(filePath: routerPath), engine: engine,
-        appVersion: installed.appVersion)
+        appVersion: installed.identity.appVersion)
       prepared = try RouterJSON.map(
         RouterJSON.map(RouterJSON.object(Data(contentsOf: file)), "mcpServers"), "cua_repl")
     } else {
@@ -90,7 +90,7 @@ struct RouterOfficialEngineTests {
       ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
     let routerPath = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
     let app = URL(filePath: appPath)
-    try OfficialEngineInstallation.verify(app: app)
+    let installed = try OfficialEngineInstallation.verify(app: app)
     let root = try RouterTestDirectory()
     let provider = try FixtureAccounts(root: root.url)
     let backend = FixtureModel()
@@ -108,7 +108,7 @@ struct RouterOfficialEngineTests {
     try RouterJSON.writePrivate(
       RouterJSON.data(["OPENAI_API_KEY": "SYNTHETIC_LOCAL_ROUTER_TEST"]),
       to: home.appending(path: "auth.json"))
-    let engine = app.appending(path: "Contents/Resources/codex")
+    let engine = installed.paths.launcher
     let userHookMarker = root.url.appending(path: "user-hook.txt")
     let userCommand = "printf 'invoked\\n' >> " + RouterJSON.shellQuote(userHookMarker.path)
     let hookFile = home.appending(path: "hooks.json")

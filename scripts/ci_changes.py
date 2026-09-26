@@ -19,6 +19,7 @@ APP_INPUTS = (
     "scripts/project_metadata.py",
     "scripts/dev.py",
     "scripts/official_app.py",
+    "scripts/official_runtime.py",
     "scripts/product_evidence.py",
     "scripts/verify_official_runtime.py",
     ".github/workflows/source-checks.yml",

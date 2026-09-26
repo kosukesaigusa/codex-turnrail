@@ -28,7 +28,7 @@ enum OfficialEngineWaitingFixture {
     try RouterJSON.writePrivate(
       RouterJSON.data(["OPENAI_API_KEY": "SYNTHETIC_LOCAL_WAITING_TEST"]),
       to: home.appending(path: "auth.json"))
-    let engine = app.appending(path: "Contents/Resources/codex")
+    let engine = try OfficialRuntimePaths.resolve(app: app).launcher
     var overrides = try runtime.configuration(engine: engine, home: home, executable: router)
     overrides += [
       "cli_auth_credentials_store=\"file\"", "model=\"gpt-5.6-luna\"",

@@ -2,6 +2,7 @@
 
 import io
 import plistlib
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import prepare_upstream as prepare
+from test_official_runtime import app_fixture
 
 
 class CandidateTests(unittest.TestCase):
@@ -34,7 +36,10 @@ class CandidateTests(unittest.TestCase):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             for name, value in members.items():
-                archive.writestr(name, value)
+                item = zipfile.ZipInfo(name)
+                kind = stat.S_IFDIR if name.endswith("/") else stat.S_IFREG
+                item.external_attr = (kind | 0o755) << 16
+                archive.writestr(item, value)
         self.candidate["size"] = len(buffer.getvalue())
 
         def download(url, destination, **kwargs):
@@ -115,6 +120,41 @@ class CandidateTests(unittest.TestCase):
                 "codex-cli 0.154.0-alpha.6.2",
             )
         self.assertEqual(signature.call_count, 3)
+
+    def test_packaged_candidate_uses_its_launcher_without_a_flat_engine(self):
+        version = "codex-cli 0.158.0-alpha.2"
+        app = app_fixture(
+            self.root / "fixture",
+            "packageV1",
+            {
+                "bundle_identifier": "com.openai.codex",
+                "version": self.candidate["version"],
+                "build": self.candidate["build"],
+                "cli_version": version,
+            },
+        )
+        members = {}
+        for path in app.rglob("*"):
+            relative = path.relative_to(app.parent).as_posix()
+            members[relative + "/" if path.is_dir() else relative] = (
+                b"" if path.is_dir() else path.read_bytes()
+            )
+        archive = self.archive(members)
+        with (
+            patch.object(prepare, "download_app_file", side_effect=archive),
+            patch.object(prepare.subprocess, "run") as signature,
+            patch.object(
+                prepare.subprocess, "check_output", return_value=version + "\n"
+            ) as execute,
+        ):
+            self.assertEqual(prepare.inspect_app(self.candidate, self.root), version)
+        self.assertEqual(signature.call_count, 4)
+        self.assertTrue(
+            execute.call_args.args[0][0].endswith(
+                "/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
+            )
+        )
+        self.assertEqual(execute.call_args.args[0][1:], ["--version"])
 
     def test_candidate_includes_next_minor_and_build_with_generated_version(self):
         from project_metadata import (

@@ -99,6 +99,7 @@ class CiChangesTests(unittest.TestCase):
         )
         for path in (
             "scripts/official_app.py",
+            "scripts/official_runtime.py",
             "scripts/product_evidence.py",
             "scripts/verify_official_runtime.py",
         ):
