@@ -8,6 +8,7 @@ final class RouterRuntime: @unchecked Sendable {
   let secret = UUID().uuidString + UUID().uuidString
   private let hookLock = NSLock()
   private let connect: @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream
+  private let connectHTTP: @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream
   private let search: @Sendable (URLRequest) throws -> Data
   private let reportFailure: @Sendable (String) -> Void
   private let transportLog: RouterTransportLog
@@ -22,11 +23,16 @@ final class RouterRuntime: @unchecked Sendable {
   init(
     root: URL, accounts: any RouterAccountProviding,
     connect: @escaping @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream,
+    connectHTTP:
+      @escaping @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream = {
+        RouterEventStream(account: $0, headers: $1)
+      },
     search: @escaping @Sendable (URLRequest) throws -> Data = { try RouterSearch.send($0) },
     reportFailure: @escaping @Sendable (String) -> Void = { _ in }
   ) throws {
     self.accounts = accounts
     self.connect = connect
+    self.connectHTTP = connectHTTP
     self.search = search
     self.reportFailure = reportFailure
     let storage = root.appending(path: "router")
@@ -59,6 +65,8 @@ final class RouterRuntime: @unchecked Sendable {
       "features.hooks=true",
       "model_catalog_json=" + RouterJSON.quote(catalog.path),
       "features.remote_models=false",
+      // The private HTTP endpoint validates JSON before attaching the bound account.
+      "features.enable_request_compression=false",
     ]
     for event in ["UserPromptSubmit", "PreCompact", "Stop"] {
       overrides.append(
@@ -166,14 +174,30 @@ final class RouterRuntime: @unchecked Sendable {
           status: 200, data: webSearch(socket.read(size), headers: request.headers))
         return
       }
-      guard request.path == "/\(secret)/v1/responses", request.method == "GET" else {
+      guard request.path == "/\(secret)/v1/responses",
+        ["GET", "POST"].contains(request.method)
+      else {
         try socket.reply(
           status: 403,
           body: ["error": ["message": "Turnrail requires a supported, bound Engine request."]])
         return
       }
-      try socket.upgrade(request)
-      route(socket, headers: request.headers)
+      let messages = RouterMessages()
+      let stream: RouterModelStream
+      if request.method == "GET" {
+        try socket.upgrade(request)
+        stream = RouterModelStream(socket: socket, transport: .webSocket)
+        messages.start(socket)
+      } else {
+        guard let raw = request.headers["content-length"], let size = Int(raw),
+          (1...64 * 1024 * 1024).contains(size)
+        else { throw RouterFailure("Invalid inference request size.") }
+        let body = try RouterModelStream.httpBody(socket.read(size), headers: request.headers)
+        stream = RouterModelStream(socket: socket, transport: .http)
+        try stream.start()
+        messages.start(socket, request: body)
+      }
+      route(stream, messages: messages, headers: request.headers)
     } catch {
       reportFailure("Local request: " + error.localizedDescription)
       // Never print HTTP headers, request bodies, or upstream errors containing credentials.
@@ -214,11 +238,12 @@ final class RouterRuntime: @unchecked Sendable {
     }
   }
 
-  private func route(_ downstream: RouterSocket, headers: [String: String]) {
-    let messages = RouterMessages()
-    messages.start(downstream)
+  private func route(
+    _ downstream: RouterModelStream, messages: RouterMessages, headers: [String: String]
+  ) {
     var upstream: (any RouterUpstream)?
     var currentTurn: String?
+    var submitted: String?
     var progress: RouterRequestProgress?
     defer {
       messages.stop()
@@ -227,6 +252,7 @@ final class RouterRuntime: @unchecked Sendable {
     do {
       while let raw = messages.next() {
         currentTurn = nil
+        submitted = nil
         progress = nil
         let body = try RouterJSON.object(raw)
         let metadata = try RouterRequest.metadata(body)
@@ -255,7 +281,8 @@ final class RouterRuntime: @unchecked Sendable {
         let account = try accounts.bound(accountID)
         try RouterModelCatalog.validate(body, catalog: account.models)
         let connection = try readyConnection(
-          upstream, account: account, headers: headers, messages: messages)
+          upstream, account: account, headers: headers, messages: messages,
+          transport: downstream.transport)
         let reused = upstream?.generation == connection.generation
         upstream = connection
         let fingerprint = try RouterRequest.fingerprint(body, input: input, turn: key)
@@ -263,6 +290,7 @@ final class RouterRuntime: @unchecked Sendable {
           body, input: input, previous: previous, account: accountID,
           generation: connection.generation)
         try ledger.begin(fingerprint, turn: key)
+        submitted = fingerprint
         guard
           let kind = RouterTransportObservation.Kind(
             rawValue: try RouterJSON.text(metadata, "request_kind"))
@@ -279,7 +307,9 @@ final class RouterRuntime: @unchecked Sendable {
           progress?.received(type: type)
           if ["error", "response.failed", "response.incomplete"].contains(type) {
             let failure = try RouterServiceFailure(event: event)
-            if failure.isWebSocketConnectionLimit, progress?.snapshot().receivedEvents == 1 {
+            if downstream.transport == .webSocket, failure.isWebSocketConnectionLimit,
+              progress?.snapshot().receivedEvents == 1
+            {
               // The service explicitly rejected this request before any response.
               // Let the Engine retry it once; closing both sockets forces a new
               // generation with full known history and the same account binding.
@@ -311,7 +341,7 @@ final class RouterRuntime: @unchecked Sendable {
         }
       }
     } catch {
-      let reported: Error
+      var reported: Error
       if var failure = error as? RouterTransportFailure {
         failure.request = progress?.snapshot()
         do { failure.reference = try transportLog.record(failure) } catch {
@@ -321,32 +351,30 @@ final class RouterRuntime: @unchecked Sendable {
       } else {
         reported = error
       }
+      if let failure = reported as? RouterTransportFailure,
+        failure.permitsEngineRecovery, let currentTurn
+      {
+        do {
+          if let submitted { try ledger.interrupt(submitted, turn: currentTurn) }
+          reportFailure("Engine transport recovery [\(failure.diagnostic)].")
+          // EOF is a retryable stream interruption in both official transports.
+          // Only the Engine resubmits, reconstructs tool history and limits retries.
+          return
+        } catch {
+          reported = error
+        }
+      }
       reportFailure("Model routing: " + reported.localizedDescription)
       if let currentTurn { try? ledger.fail(currentTurn) }
-      let code: String
-      if let failure = error as? RouterServiceFailure, failure.isMisalignmentPolicyViolation {
-        // Preserve the official Engine's safety-stop classification. A generic
-        // routing error hides the precaution from the desktop client.
-        code = "misalignment_policy_violation"
-      } else {
-        code = "turnrail_routing_stopped"
-      }
-      try? downstream.frame(
-        RouterJSON.data([
-          // A terminal request error must not trigger the Engine's transport retry
-          // policy, which can permanently disable WebSockets for the task.
-          "type": "error", "status": 400,
-          "error": [
-            "type": "invalid_request_error", "code": code,
-            "message": reported.localizedDescription,
-          ],
-        ]))
+      try? downstream.reject(
+        message: reported.localizedDescription,
+        policyViolation: (error as? RouterServiceFailure)?.isMisalignmentPolicyViolation == true)
     }
   }
 
   private func readyConnection(
     _ current: (any RouterUpstream)?, account: RouterAccountSnapshot,
-    headers: [String: String], messages: RouterMessages
+    headers: [String: String], messages: RouterMessages, transport: RouterModelStream.Transport
   ) throws -> any RouterUpstream {
     if let current, current.accountID == account.account.id {
       do {
@@ -359,7 +387,8 @@ final class RouterRuntime: @unchecked Sendable {
         current.close()
       }
     }
-    let connection = connect(account, headers)
+    let connection =
+      transport == .webSocket ? connect(account, headers) : connectHTTP(account, headers)
     try messages.attach(connection)
     try connection.checkConnection()
     return connection

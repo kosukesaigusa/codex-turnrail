@@ -190,6 +190,7 @@ final class RouterMessages: @unchecked Sendable {
   private let condition = NSCondition()
   private var messages: [Data] = []
   private var stopped = false
+  private var singleRequest = false
   private var upstream: (any RouterUpstream)?
 
   func start(_ socket: RouterSocket) {
@@ -211,11 +212,25 @@ final class RouterMessages: @unchecked Sendable {
     }
   }
 
+  func start(_ socket: RouterSocket, request: Data) {
+    condition.lock()
+    singleRequest = true
+    messages = [request]
+    condition.unlock()
+    socket.waitUntilClosed()
+    socket.onClose { self.stop() }
+    DispatchQueue(label: "Turnrail.http.cancellation").async {
+      // A POST has exactly one bounded body. EOF or unexpected trailing data ends it.
+      _ = try? socket.read(1)
+      self.stop()
+    }
+  }
+
   func next() -> Data? {
     condition.lock()
     defer { condition.unlock() }
-    while !stopped && messages.isEmpty { condition.wait() }
-    if stopped { return nil }
+    while !stopped && messages.isEmpty && !singleRequest { condition.wait() }
+    if stopped || messages.isEmpty { return nil }
     return messages.removeFirst()
   }
 
@@ -347,6 +362,7 @@ enum RouterRequest {
     var identity = body
     identity.removeValue(forKey: "previous_response_id")
     identity.removeValue(forKey: "client_metadata")
+    identity.removeValue(forKey: "stream")
     identity["input"] = input
     return RouterJSON.hash(try RouterJSON.data(["turn": turn, "request": identity]))
   }

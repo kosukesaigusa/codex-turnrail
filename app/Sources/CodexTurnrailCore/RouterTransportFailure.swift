@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Transport diagnostics contain protocol and numeric OS codes, never server text or URLs.
@@ -27,6 +28,28 @@ struct RouterTransportFailure: LocalizedError {
       code = nil
     }
     self.closeCode = (1000...4999).contains(closeCode.rawValue) ? closeCode.rawValue : nil
+  }
+
+  /// Only known connection failures participate in the Engine's recovery policy.
+  var permitsEngineRecovery: Bool {
+    guard cause != .localClose else { return false }
+    if let closeCode, ![1000, 1001, 1005, 1006, 1011, 1012, 1013].contains(closeCode) {
+      return false
+    }
+    switch domain {
+    case NSURLErrorDomain:
+      return [
+        URLError.timedOut.rawValue, URLError.cannotFindHost.rawValue,
+        URLError.cannotConnectToHost.rawValue, URLError.networkConnectionLost.rawValue,
+        URLError.dnsLookupFailed.rawValue, URLError.notConnectedToInternet.rawValue,
+      ].contains(code)
+    case NSPOSIXErrorDomain:
+      return [
+        ENOTCONN, ECONNRESET, ECONNABORTED, EPIPE, ETIMEDOUT, ENETDOWN,
+        ENETUNREACH, EHOSTUNREACH, ECONNREFUSED,
+      ].map(Int.init).contains(code)
+    default: return false
+    }
   }
 
   var diagnostic: String {
