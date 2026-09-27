@@ -3,12 +3,18 @@ import Testing
 
 @testable import CodexTurnrailCore
 
-/// Exercise response waiting through the signed Engine and real Foundation WebSockets.
+/// Exercise response waiting through the signed Engine and real Foundation transports.
 enum OfficialEngineWaitingFixture {
-  enum Scenario { case cancellation, engineTimeout, delayedResponse }
+  enum Scenario { case cancellation, httpCancellation, httpWaiting, engineTimeout, delayedResponse }
+
+  static func verifyHTTPWaiting(app: URL, router: URL) throws {
+    try verify(.httpWaiting, app: app, router: router)
+  }
 
   static func verify(app: URL, router: URL) throws {
-    for scenario in [Scenario.cancellation, .engineTimeout, .delayedResponse] {
+    for scenario in [
+      Scenario.cancellation, .httpCancellation, .httpWaiting, .engineTimeout, .delayedResponse,
+    ] {
       try verify(scenario, app: app, router: router)
     }
   }
@@ -16,11 +22,18 @@ enum OfficialEngineWaitingFixture {
   private static func verify(_ scenario: Scenario, app: URL, router: URL) throws {
     let root = try RouterTestDirectory()
     let provider = try FixtureAccounts(root: root.url)
-    let server = try WaitingModelServer(delayedResponse: scenario == .delayedResponse)
+    let delay: TimeInterval?
+    switch scenario {
+    case .delayedResponse: delay = 181
+    case .httpWaiting: delay = 65  // Beyond Foundation's normal 60-second request timeout.
+    default: delay = nil
+    }
+    let server = try WaitingModelServer(delay: delay)
     defer { server.stop() }
     let runtime = try RouterRuntime(
       root: root.url, accounts: provider,
-      connect: { account, _ in server.connect(account: account.account.id) })
+      connect: { account, _ in server.connect(account: account.account.id) },
+      connectHTTP: { account, _ in server.connectHTTP(account: account.account.id) })
     runtime.start()
     defer { runtime.stop() }
     let home = root.url.appending(path: "home")
@@ -36,16 +49,19 @@ enum OfficialEngineWaitingFixture {
       "features.memories=false", "analytics.enabled=false", "web_search=\"disabled\"",
       "approval_policy=\"never\"", "sandbox_mode=\"read-only\"",
     ]
-    if scenario == .engineTimeout {
+    if scenario == .engineTimeout || scenario == .httpCancellation || scenario == .httpWaiting {
       // Built-in providers cannot be overridden. A local fixture provider lets
       // the unmodified Engine exercise its idle deadline without a five-minute wait.
       let endpoint = "http://127.0.0.1:\(runtime.listener.port)/\(runtime.secret)/v1"
+      let transport =
+        scenario != .engineTimeout
+        ? "supports_websockets=false" : "supports_websockets=true,stream_idle_timeout_ms=1000"
       overrides += [
         "model_provider=\"waiting_fixture\"",
         "model_providers.waiting_fixture={name=\"OpenAI\",base_url="
           + RouterJSON.quote(endpoint)
           + ",wire_api=\"responses\",requires_openai_auth=true,"
-          + "supports_websockets=true,stream_idle_timeout_ms=1000}",
+          + transport + "}",
       ]
     }
     let rpc = try OfficialEngineRPC(
@@ -62,12 +78,12 @@ enum OfficialEngineWaitingFixture {
     let turn = try RouterJSON.text(RouterJSON.map(started, "turn"), "id")
     try #require(server.requestReceived.wait(timeout: .now() + 10) == .success)
     let waitingAt = ProcessInfo.processInfo.systemUptime
-    if scenario == .cancellation {
+    if scenario == .cancellation || scenario == .httpCancellation {
       _ = try rpc.request("turn/interrupt", ["threadId": thread, "turnId": turn])
     }
     let result = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
     switch scenario {
-    case .cancellation:
+    case .cancellation, .httpCancellation:
       try #require(result["status"] as? String == "interrupted")
       try #require(server.disconnected.wait(timeout: .now() + 5) == .success)
       #expect(ProcessInfo.processInfo.systemUptime - waitingAt < 10)
@@ -76,11 +92,11 @@ enum OfficialEngineWaitingFixture {
       try #require(server.disconnected.wait(timeout: .now() + 5) == .success)
       #expect(ProcessInfo.processInfo.systemUptime - waitingAt >= 1)
       #expect(ProcessInfo.processInfo.systemUptime - waitingAt < 20)
-    case .delayedResponse:
+    case .delayedResponse, .httpWaiting:
       try #require(result["status"] as? String == "completed")
       let items = try rpc.takeNotifications("item/completed")
       #expect(try RouterJSON.string(["items": items]).contains("Quiet response completed"))
-      #expect(try #require(server.responseDelay) >= 181)
+      #expect(try #require(server.responseDelay) >= #require(delay))
     }
     // Engine retries, if any, must stop at the ledger; upstream inference occurs once.
     #expect(server.requests.count == 1)
@@ -102,51 +118,71 @@ private final class WaitingModelServer: @unchecked Sendable {
   var accounts: [UUID] { lock.withLock { opened } }
   var responseDelay: TimeInterval? { lock.withLock { elapsed } }
 
-  init(delayedResponse: Bool) throws {
+  init(delay: TimeInterval?) throws {
     listener = try RouterListener()
     listener.start { [weak self] socket in
       guard let self else { return }
       defer { self.disconnected.signal() }
       do {
-        try socket.upgrade(socket.request())
+        let request = try socket.request()
+        if request.method == "POST" {
+          let length = try #require(request.headers["content-length"])
+          let body = try socket.read(#require(Int(length)))
+          self.lock.withLock { self.received.append(body) }
+          let stream = RouterModelStream(socket: socket, transport: .http)
+          try stream.frame(
+            RouterJSON.data(["type": "response.created", "response": ["id": "quiet-response"]]))
+          socket.waitUntilClosed()
+          self.requestReceived.signal()
+          if let delay { self.scheduleResponse(socket, delay: delay, http: true) }
+          _ = try? socket.read(1)
+          return
+        }
+        try socket.upgrade(request)
         while let request = try socket.message() {
           self.lock.withLock { self.received.append(request) }
           try socket.frame(
             RouterJSON.data(["type": "response.created", "response": ["id": "quiet-response"]]))
-          let waitingAt = ProcessInfo.processInfo.systemUptime
           self.requestReceived.signal()
-          if delayedResponse {
-            let reply = DispatchWorkItem { [weak self] in
-              guard let self else { return }
-              do {
-                let item: [String: Any] = [
-                  "id": "quiet-item", "type": "message", "role": "assistant",
-                  "content": [["type": "output_text", "text": "Quiet response completed"]],
-                ]
-                try socket.frame(
-                  RouterJSON.data(["type": "response.output_item.done", "item": item]))
-                self.lock.withLock {
-                  self.elapsed = ProcessInfo.processInfo.systemUptime - waitingAt
-                }
-                try socket.frame(
-                  RouterJSON.data([
-                    "type": "response.completed",
-                    "response": [
-                      "id": "quiet-response",
-                      "usage": ["input_tokens": 1, "output_tokens": 1, "total_tokens": 2],
-                    ],
-                  ]))
-              } catch { Issue.record(error) }
-            }
-            self.lock.withLock { self.replies.append(reply) }
-            // Exercise more than three minutes of model silence with transport pongs only.
-            DispatchQueue.global().asyncAfter(deadline: .now() + 181, execute: reply)
-          }
+          if let delay { self.scheduleResponse(socket, delay: delay, http: false) }
         }
       } catch {
         // Engine cancellation may close TCP without completing a WebSocket close handshake.
       }
     }
+  }
+
+  private func scheduleResponse(_ socket: RouterSocket, delay: TimeInterval, http: Bool) {
+    let waitingAt = ProcessInfo.processInfo.systemUptime
+    let reply = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      do {
+        let item: [String: Any] = [
+          "id": "quiet-item", "type": "message", "role": "assistant",
+          "content": [["type": "output_text", "text": "Quiet response completed"]],
+        ]
+        self.lock.withLock { self.elapsed = ProcessInfo.processInfo.systemUptime - waitingAt }
+        for event: [String: Any] in [
+          ["type": "response.output_item.done", "item": item],
+          [
+            "type": "response.completed",
+            "response": [
+              "id": "quiet-response",
+              "usage": ["input_tokens": 1, "output_tokens": 1, "total_tokens": 2],
+            ],
+          ],
+        ] {
+          let data = try RouterJSON.data(event)
+          if http {
+            try socket.write(Data("data: ".utf8) + data + Data("\n\n".utf8))
+          } else {
+            try socket.frame(data)
+          }
+        }
+      } catch { Issue.record(error) }
+    }
+    lock.withLock { replies.append(reply) }
+    DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: reply)
   }
 
   func connect(account: UUID) -> RouterWebSocket {
@@ -155,6 +191,13 @@ private final class WaitingModelServer: @unchecked Sendable {
       accountID: account,
       request: URLRequest(url: URL(string: "ws://127.0.0.1:\(listener.port)/responses")!),
       policy: .live)
+  }
+
+  func connectHTTP(account: UUID) -> RouterEventStream {
+    lock.withLock { opened.append(account) }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(listener.port)/responses")!)
+    request.httpMethod = "POST"
+    return RouterEventStream(accountID: account, request: request)
   }
 
   func stop() {

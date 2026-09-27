@@ -136,7 +136,11 @@ final class RouterSocket: @unchecked Sendable {
       Data(
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n"
           .utf8))
-    // A desktop socket can stay idle between turns. Lifecycle shutdown interrupts recv.
+    waitUntilClosed()
+  }
+
+  /// Streaming lifetime belongs to the Engine; lifecycle shutdown interrupts recv.
+  func waitUntilClosed() {
     var timeout = timeval(tv_sec: 0, tv_usec: 0)
     setsockopt(
       descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))

@@ -84,7 +84,7 @@ struct RouterOfficialEngineTests {
 
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
-    .timeLimit(.minutes(5)))
+    .timeLimit(.minutes(6)))
   func officialEngineExecutesCodeModeAndTitlesThroughTheNativeRouter() throws {
     let appPath = try #require(
       ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
@@ -100,6 +100,9 @@ struct RouterOfficialEngineTests {
       root: root.url, accounts: provider,
       connect: { account, _ in
         FixtureUpstream(account: account.account.id, backend: backend)
+      },
+      connectHTTP: { account, _ in
+        FixtureUpstream(account: account.account.id, backend: backend, transport: "http")
       }, search: { try searches.send($0) }, reportFailure: { failures.append($0) })
     runtime.start()
     defer { runtime.stop() }
@@ -301,13 +304,13 @@ struct RouterOfficialEngineTests {
       [
         "threadId": thread,
         "input": [
-          ["type": "text", "text": "Test uncertain delivery without replay.", "text_elements": []]
+          ["type": "text", "text": "Recover an interrupted stream.", "text_elements": []]
         ],
       ])
     let failedID = try RouterJSON.text(RouterJSON.map(failedStart, "turn"), "id")
     let failedTurn = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
-    #expect(failedTurn["status"] as? String == "failed")
-    #expect(backend.requests(for: failedID).count == 1)
+    #expect(failedTurn["status"] as? String == "completed")
+    #expect(backend.requests(for: failedID).count == 3)
     let diagnosticData = try Data(
       contentsOf: root.url.appending(path: "router/transport-diagnostics.json"))
     let diagnostic = try #require(
@@ -339,7 +342,7 @@ struct RouterOfficialEngineTests {
     let recoveredCalls = backend.requests(for: try RouterJSON.text(recovered, "id"))
     #expect(recoveredCalls.count == 2)
     #expect(recoveredCalls.allSatisfy { $0.account == provider.first.account.id })
-    #expect(backend.requests(for: failedID).count == 1)
+    #expect(backend.requests(for: failedID).count == 3)
     backend.setTool(
       #"text(await tools.web__run({ search_query: [{ q: "turnrail synthetic search" }], response_length: "short" }));"#
     )
@@ -375,11 +378,10 @@ struct RouterOfficialEngineTests {
     #expect(searchMetadata["thread_id"] as? String == searchID)
     #expect(searchMetadata["turn_id"] as? String == searchDone["id"] as? String)
     #expect(searchCalls.allSatisfy { $0.account == provider.first.account.id })
-    // If the replacement transport is also unavailable, stop before inference.
-    // The Engine must not retry the failed turn or choose a different account.
+    // A temporary pre-send failure lets the Engine reconnect on the same account.
     let opened = backend.openedAccounts.count
     backend.expireConnections()
-    backend.allowNewConnections(false)
+    backend.refuseConnections(1)
     _ = try rpc.request(
       "turn/start",
       [
@@ -389,19 +391,18 @@ struct RouterOfficialEngineTests {
         ],
       ])
     let unavailable = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
-    #expect(unavailable["status"] as? String == "failed")
-    #expect(backend.requests(for: try RouterJSON.text(unavailable, "id")).isEmpty)
-    #expect(backend.openedAccounts.count == opened + 1)
+    #expect(unavailable["status"] as? String == "completed")
+    #expect(backend.requests(for: try RouterJSON.text(unavailable, "id")).count == 2)
+    #expect(backend.openedAccounts.count == opened + 2)
     #expect(backend.openedAccounts.last == provider.first.account.id)
-    backend.allowNewConnections(true)
     // Compaction can lose its connection after the server acknowledged the request.
-    // Keep that distinction in diagnostics without replaying or switching accounts.
+    // Preserve that distinction in diagnostics while the Engine recovers the same binding.
     backend.failNextRequest(afterCreated: true)
     _ = try rpc.request("thread/compact/start", ["threadId": thread])
     let interruptedCompact = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
-    #expect(interruptedCompact["status"] as? String == "failed")
+    #expect(interruptedCompact["status"] as? String == "completed")
     let interruptedCalls = backend.requests(for: try RouterJSON.text(interruptedCompact, "id"))
-    #expect(interruptedCalls.count == 1)
+    #expect(interruptedCalls.count == 2)
     #expect(interruptedCalls.allSatisfy { $0.account == provider.first.account.id })
     let compactDiagnosticData = try Data(
       contentsOf: root.url.appending(path: "router/transport-diagnostics.json"))
@@ -467,14 +468,16 @@ struct RouterOfficialEngineTests {
     try OfficialEngineConnectionLimitFixture.verify(
       rpc: rpc, backend: backend, provider: provider, root: root.url)
     rpc.close()
+    try OfficialEngineRecoveryFixture.verify(app: app, router: URL(filePath: routerPath))
     try OfficialEngineWaitingFixture.verify(app: app, router: URL(filePath: routerPath))
     if let proof = ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_PROOF"] {
       try RouterJSON.writePrivate(
         RouterJSON.data([
           "code_mode", "account_switch", "title_routing", "approval_accept", "approval_decline",
-          "no_replay", "compaction", "failure_recovery", "web_search", "connection_recovery",
+          "transport_recovery", "compaction", "failure_recovery", "web_search",
+          "connection_recovery",
           "model_wait", "model_wait_cancellation", "engine_idle_timeout",
-          "connection_limit_recovery",
+          "connection_limit_recovery", "http_recovery", "tool_result_recovery",
         ]), to: URL(filePath: proof))
     }
   }
@@ -552,13 +555,17 @@ final class FixtureModel: @unchecked Sendable {
     let account: UUID
     let body: RouterObject
     let turn: String
+    let transport: String
   }
   private let lock = NSLock()
   private var received: [Request] = []
   private var tools = Set<String>()
   private var toolSource = "text(6 * 7);"
-  private var failNext = false
-  private var emitCreatedBeforeFailure = false
+  enum Interruption { case empty, created, text, tool }
+  private var interruption = Interruption.empty
+  private var interruptionDelay = 0
+  private var interruptionCount = 0
+  private var onInterruption: (@Sendable () -> Void)?
   private var rejection: RouterObject?
   private var rejectionDelay = 0
   private var rejectionCount = 0
@@ -566,24 +573,34 @@ final class FixtureModel: @unchecked Sendable {
   private var onRejection: (@Sendable () -> Void)?
   private var epoch = 0
   private var opened: [UUID] = []
-  private var acceptingConnections = true
+  private var refusedConnections = 0
 
   var connectionEpoch: Int { lock.withLock { epoch } }
   var openedAccounts: [UUID] { lock.withLock { opened } }
   func expireConnections() { lock.withLock { epoch += 1 } }
-  func allowNewConnections(_ value: Bool) { lock.withLock { acceptingConnections = value } }
+  func refuseConnections(_ count: Int) { lock.withLock { refusedConnections = count } }
   func openConnection(account: UUID) -> (Int, Bool) {
     lock.withLock {
       opened.append(account)
-      return (epoch, acceptingConnections)
+      let accepted = refusedConnections == 0
+      if !accepted { refusedConnections -= 1 }
+      return (epoch, accepted)
     }
   }
 
   func setTool(_ source: String) { lock.withLock { toolSource = source } }
   func failNextRequest(afterCreated: Bool) {
+    interrupt(after: 0, count: 1, at: afterCreated ? .created : .empty, onInterruption: {})
+  }
+  func interrupt(
+    after: Int, count: Int, at interruption: Interruption,
+    onInterruption: @escaping @Sendable () -> Void
+  ) {
     lock.withLock {
-      failNext = true
-      emitCreatedBeforeFailure = afterCreated
+      self.interruption = interruption
+      interruptionDelay = after
+      interruptionCount = count
+      self.onInterruption = onInterruption
     }
   }
   func rejectNext(_ event: [String: Any]) {
@@ -607,12 +624,13 @@ final class FixtureModel: @unchecked Sendable {
     lock.withLock { received.filter { $0.turn == turn } }
   }
 
-  func response(_ data: Data, account: UUID) throws -> [Data] {
+  func response(_ data: Data, account: UUID, transport: String) throws -> [Data] {
     try lock.withLock {
       let body = try RouterJSON.object(data)
       let metadata = try RouterRequest.metadata(body)
       let turn = try RouterJSON.text(metadata, "turn_id")
-      received.append(Request(account: account, body: RouterObject(body), turn: turn))
+      received.append(
+        Request(account: account, body: RouterObject(body), turn: turn, transport: transport))
       if let rejection, rejectionDelay == 0 {
         rejectionCount -= 1
         if rejectionCount == 0 { self.rejection = nil }
@@ -627,17 +645,35 @@ final class FixtureModel: @unchecked Sendable {
         return try events.map(RouterJSON.data)
       }
       if rejectionDelay > 0 { rejectionDelay -= 1 }
-      if failNext {
-        failNext = false
-        if emitCreatedBeforeFailure {
-          return [
-            try RouterJSON.data([
-              "type": "response.created", "response": ["id": "fixture-interrupted-response"],
-            ])
+      if interruptionDelay == 0, interruptionCount > 0 {
+        interruptionCount -= 1
+        onInterruption?()
+        if interruption == .empty { return [] }
+        var events: [[String: Any]] = [
+          ["type": "response.created", "response": ["id": "fixture-interrupted-\(received.count)"]]
+        ]
+        if interruption == .text {
+          let item: [String: Any] = [
+            "id": "partial-\(received.count)", "type": "message", "role": "assistant",
+            "content": [["type": "output_text", "text": "INTERRUPTED_ASSISTANT_NOTE"]],
           ]
+          events += [
+            ["type": "response.output_text.delta", "delta": "INTERRUPTED_ASSISTANT_NOTE"],
+            ["type": "response.output_item.done", "item": item],
+          ]
+        } else if interruption == .tool {
+          tools.insert(turn)
+          events.append([
+            "type": "response.output_item.done",
+            "item": [
+              "id": "tool-" + turn, "type": "custom_tool_call", "name": "exec",
+              "call_id": "call-" + turn, "input": toolSource,
+            ],
+          ])
         }
-        return []  // Simulate disconnection after the request reached the server.
+        return try events.map(RouterJSON.data)
       }
+      if interruptionDelay > 0 { interruptionDelay -= 1 }
       let item: [String: Any]
       if metadata["request_kind"] as? String == "compaction" {
         item = [
@@ -674,16 +710,18 @@ final class FixtureModel: @unchecked Sendable {
   }
 }
 
-private final class FixtureUpstream: RouterUpstream, @unchecked Sendable {
+final class FixtureUpstream: RouterUpstream, @unchecked Sendable {
   let generation = UUID().uuidString
   let accountID: UUID
   private let backend: FixtureModel
   private let epoch: Int
   private let available: Bool
   private var events: [Data] = []
-  init(account: UUID, backend: FixtureModel) {
+  private let transport: String
+  init(account: UUID, backend: FixtureModel, transport: String = "websocket") {
     accountID = account
     self.backend = backend
+    self.transport = transport
     (epoch, available) = backend.openConnection(account: account)
   }
   func checkConnection() throws {
@@ -696,7 +734,7 @@ private final class FixtureUpstream: RouterUpstream, @unchecked Sendable {
     guard epoch == backend.connectionEpoch else {
       throw RouterFailure("The idle fixture connection expired before sending.")
     }
-    events = try backend.response(data, account: accountID)
+    events = try backend.response(data, account: accountID, transport: transport)
   }
   func receive() throws -> Data {
     guard !events.isEmpty else {
