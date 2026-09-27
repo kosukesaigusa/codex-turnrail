@@ -49,7 +49,7 @@ struct RouterServiceFailure: LocalizedError, Sendable {
     if !recognized { diagnostics.append("reason unavailable or unrecognized") }
     description =
       summary + " [" + diagnostics.joined(separator: "; ") + "] "
-      + "No account switch or inference replay was attempted."
+      + "This rejection will not be retried or moved to another account."
   }
 
   /// Retains the official Engine's retry classification without exposing server text or headers.

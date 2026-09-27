@@ -1,5 +1,11 @@
 # Verification
 
+## Temporary network recovery
+
+The September 27, 2026 recovery fixture uses synthetic accounts with the signed official Engine from ChatGPT `26.924.20706 (11431)` and the locally installed `26.924.22138 (11645)`. The Engine completes interrupted turns without a new user message when the connection fails before response creation, during partial assistant text, after a completed tool result, or after tool dispatch before response completion. Changing folder priority during recovery does not change the bound account. A real local marker command executes once and its result is retained in the retry input.
+
+The HTTP scenario exhausts a deliberately short WebSocket retry budget in a test provider, then completes over HTTP/SSE even after another disconnection. The installed-runtime check exercises real Foundation HTTP streaming against a loopback model server. Authentication, quota and policy refusals remain terminal over HTTP; the next turn succeeds, and a persistent outage stops at the Engine's retry budget. Unit tests also cover ledger restart boundaries, active/completed duplicate requests, redirect rejection, incremental SSE framing and cancellation. Product retry budgets are not overridden. These checks do not simulate a physical Wi-Fi-to-tethering handover or use real model-service credentials. Review is non-fresh self-review by the implementing agent.
+
 ## Official runtime package layout
 
 The September 26, 2026 layout verification covers ChatGPT `26.917.71314 (10954)` with its flat CLI layout and `26.924.20706 (11431)` with the version-1 `codex-cli` package and CLI `0.158.0-alpha.2`. Both signed official runtimes pass all 14 routing scenarios against synthetic accounts and a local model, including Code Mode, title routing, account changes, approvals, compaction, connection recovery, web search, and long-response waiting. Separate official-runtime tests pass authentication inspection without credential rewriting and configuration/policy reads through both desktop-helper paths.

@@ -187,15 +187,37 @@ final class RouterLedger: @unchecked Sendable {
       }
       let next: String
       if let request = try RouterJSON.map(state, "requests")[fingerprint] {
-        guard let request = request as? [String: Any], request["turn"] as? String == turn,
-          request["state"] as? String == "connection_limited"
+        guard let request = request as? [String: Any], request["turn"] as? String == turn
         else {
-          throw RouterFailure(
-            "This inference request was already submitted; automatic replay is forbidden.")
+          throw RouterFailure("Invalid saved inference request identity.")
         }
-        next = "retrying"
+        switch request["state"] as? String {
+        case "connection_limited", "interrupted_retry": next = "retrying"
+        case "interrupted": next = "forwarding"
+        default:
+          throw RouterFailure("This inference request has no recorded recoverable interruption.")
+        }
       } else {
         next = "forwarding"
+      }
+      try put("requests", fingerprint, ["turn": turn, "state": next])
+      try persist()
+    }
+  }
+
+  /// The Engine may resubmit only after a transport interruption was actually observed.
+  ///
+  /// Retain whether the single connection-limit recovery allowance was already consumed.
+  func interrupt(_ fingerprint: String, turn: String) throws {
+    try lock.withLock {
+      guard let request = try RouterJSON.map(state, "requests")[fingerprint] as? [String: Any],
+        request["turn"] as? String == turn
+      else { throw RouterFailure("Cannot interrupt an unknown inference request.") }
+      let next: String
+      switch request["state"] as? String {
+      case "forwarding": next = "interrupted"
+      case "retrying": next = "interrupted_retry"
+      default: throw RouterFailure("Cannot interrupt a request that is not in flight.")
       }
       try put("requests", fingerprint, ["turn": turn, "state": next])
       try persist()
