@@ -5,6 +5,19 @@ import Testing
 
 struct RouterAccountLifecycleTests {
   @Test
+  func startupCatalogCachesOnlyCapabilitiesAndSelectionsStillReadQuota() throws {
+    let fixture = try AccountInspectionFixture()
+    fixture.change { $0.metadataFailure = .usage }
+    let catalog = try RouterJSON.array(fixture.router.commonCatalog(), "models")
+    #expect(try catalog.map { try RouterJSON.text($0, "slug") } == ["fixture"])
+    #expect(fixture.calls == ["auth", "models", "auth", "models"])
+    #expect(
+      try fixture.router.select(cwd: fixture.root.url.path).account.id == fixture.accounts[0].id)
+    #expect(fixture.calls == ["auth", "models", "auth", "models", "usage"])
+    #expect(fixture.warnings == [.transport])
+  }
+
+  @Test
   func boundRequestsDoNotDependOnRepeatedAccountQuotaOrCatalogInspection() throws {
     let fixture = try AccountInspectionFixture()
     let selected = try fixture.router.select(cwd: fixture.root.url.path)
@@ -51,11 +64,11 @@ struct RouterAccountLifecycleTests {
       ])
     #expect(try RouterJSON.text(RouterJSON.object(result), "output") == "result")
     #expect(try runtime.ledger.bound("thread/turn") == selected.account.id)
-    #expect(fixture.calls == ["auth", "usage", "models"])
+    #expect(fixture.calls == ["auth", "models", "usage"])
   }
 
   @Test
-  func nearExpiryRenewsOnlyAuthenticationAndDoesNotMarkQuotaAsFresh() throws {
+  func nearExpiryRenewsOnlyAuthenticationAndTheNextSelectionStillChecksQuota() throws {
     let fixture = try AccountInspectionFixture()
     let selected = try fixture.router.select(cwd: fixture.root.url.path)
     fixture.change {
@@ -67,12 +80,11 @@ struct RouterAccountLifecycleTests {
     #expect(renewed.credential.accountID == selected.credential.accountID)
     #expect(renewed.credential.expiresAt > selected.credential.expiresAt)
     #expect(renewed.inspectedAt == selected.inspectedAt)
-    #expect(fixture.calls == ["auth", "usage", "models", "auth"])
+    #expect(fixture.calls == ["auth", "models", "usage", "auth"])
     #expect(try fixture.router.bound(selected.account.id) === renewed)
-    #expect(throws: AccountInspectionFixture.Failure.self) {
-      try fixture.router.select(cwd: fixture.root.url.path)
-    }
-    #expect(fixture.calls.suffix(2) == ["auth", "usage"])
+    #expect(try fixture.router.select(cwd: fixture.root.url.path).account.id == selected.account.id)
+    #expect(fixture.calls.suffix(3) == ["auth", "models", "usage"])
+    #expect(fixture.warnings == [.transport])
   }
 
   @Test
@@ -92,13 +104,13 @@ struct RouterAccountLifecycleTests {
         #expect(throws: (any Error).self) { try fixture.router.bound(selected.account.id) }
       }
       let renewals = failure == 0 ? ["auth", "auth"] : ["auth"]
-      #expect(fixture.calls == ["auth", "usage", "models"] + renewals)
+      #expect(fixture.calls == ["auth", "models", "usage"] + renewals)
     }
   }
 
   @Test
   func metadataRefreshFailureDoesNotPoisonAnExistingBindingOrSeedAnUnverifiedOne() throws {
-    for failure in [AccountInspectionFixture.Failure.usage, .models, .authentication] {
+    for failure in [AccountInspectionFixture.Failure.models, .authentication] {
       let fixture = try AccountInspectionFixture()
       let selected = try fixture.router.select(cwd: fixture.root.url.path)
       fixture.change {
@@ -130,7 +142,7 @@ struct RouterAccountLifecycleTests {
         : []
       try fixture.save(accounts)
       #expect(throws: RouterFailure.self) { try fixture.router.bound(selected.account.id) }
-      #expect(fixture.calls == ["auth", "usage", "models"])
+      #expect(fixture.calls == ["auth", "models", "usage"])
     }
   }
 
@@ -139,14 +151,12 @@ struct RouterAccountLifecycleTests {
     let fixture = try AccountInspectionFixture()
     let first = try fixture.router.select(cwd: fixture.root.url.path)
     fixture.change {
-      $0.now = fixture.started.addingTimeInterval(61)
       $0.exhausted.insert(first.credential.accountID)
     }
     let second = try fixture.router.select(cwd: fixture.root.url.path)
     #expect(second.account.id == fixture.accounts[1].id)
     let bound = try fixture.router.bound(first.account.id)
     #expect(bound.account.id == first.account.id)
-    #expect(!bound.usable)
     try RouterModelCatalog.validate(["model": "fixture"], catalog: bound.models)
     try fixture.save(fixture.accounts.reversed())
     #expect(try fixture.router.select(cwd: fixture.root.url.path).account.id == second.account.id)
@@ -165,12 +175,12 @@ struct RouterAccountLifecycleTests {
       try fixture.router.select(cwd: fixture.root.url.path)
     }
     #expect(throws: RouterFailure.self) { try fixture.router.bound(selected.account.id) }
-    #expect(fixture.calls == ["auth", "usage", "models", "auth"])
+    #expect(fixture.calls == ["auth", "models", "usage", "auth"])
   }
 
   @Test
   func confirmedRejectionsInvalidateBindingsUntilSuccessfulAuthentication() throws {
-    for failure in 0..<3 {
+    for failure in 0..<4 {
       let fixture = try AccountInspectionFixture()
       let selected = try fixture.router.select(cwd: fixture.root.url.path)
       fixture.change {
@@ -178,7 +188,8 @@ struct RouterAccountLifecycleTests {
         switch failure {
         case 0: $0.authenticationRejection = .unverifiedPolicy
         case 1: $0.loginRequired = true
-        default: $0.metadataRejectsCredentials = true
+        case 2: $0.metadataRejectsCredentials = true
+        default: $0.quotaRejectsCredentials = true
         }
       }
       #expect(throws: (any Error).self) { try fixture.router.select(cwd: fixture.root.url.path) }
@@ -187,6 +198,7 @@ struct RouterAccountLifecycleTests {
         $0.authenticationRejection = nil
         $0.loginRequired = false
         $0.metadataRejectsCredentials = false
+        $0.quotaRejectsCredentials = false
       }
       let verified = try fixture.router.select(cwd: fixture.root.url.path)
       #expect(verified.account.id == selected.account.id)
@@ -194,8 +206,8 @@ struct RouterAccountLifecycleTests {
     }
   }
 
-  @Test
-  func slowSelectionRefreshDoesNotBlockAnotherTurnsValidBinding() throws {
+  @Test(arguments: [false, true])
+  func quotaWaitDoesNotBlockAnExistingBindingOrItsAuthenticationRenewal(renew: Bool) throws {
     let fixture = try AccountInspectionFixture()
     let selected = try fixture.router.select(cwd: fixture.root.url.path)
     let entered = DispatchSemaphore(value: 0)
@@ -205,22 +217,25 @@ struct RouterAccountLifecycleTests {
     let selectionQueue = DispatchQueue(label: "RouterAccountLifecycleTests.selection")
     let boundQueue = DispatchQueue(label: "RouterAccountLifecycleTests.bound")
     fixture.change {
-      $0.now = fixture.started.addingTimeInterval(61)
       $0.metadataGate = (entered, release)
       $0.metadataFailure = .usage
     }
     selectionQueue.async {
       defer { selectionDone.signal() }
-      #expect(throws: AccountInspectionFixture.Failure.self) {
-        try fixture.router.select(cwd: fixture.root.url.path)
-      }
+      do {
+        #expect(
+          try fixture.router.select(cwd: fixture.root.url.path).account.id == selected.account.id)
+      } catch { Issue.record(error) }
     }
     #expect(entered.wait(timeout: .now() + 10) == .success)
+    if renew { fixture.change { $0.now = selected.credential.expiresAt.addingTimeInterval(-60) } }
     boundQueue.async {
       defer { boundDone.signal() }
-      do { #expect(try fixture.router.bound(selected.account.id) === selected) } catch {
-        Issue.record(error)
-      }
+      do {
+        let bound = try fixture.router.bound(selected.account.id)
+        #expect(bound.account.id == selected.account.id)
+        #expect((bound.credential.accessToken != selected.credential.accessToken) == renew)
+      } catch { Issue.record(error) }
     }
     let completedBeforeRefresh = boundDone.wait(timeout: .now() + 10) == .success
     release.signal()
@@ -228,6 +243,70 @@ struct RouterAccountLifecycleTests {
     if !completedBeforeRefresh { _ = boundDone.wait(timeout: .now() + 5) }
     #expect(completedBeforeRefresh)
   }
+
+  @Test
+  func consecutiveSelectionsAlwaysCheckQuotaWithoutRepeatingCapabilityReads() throws {
+    let fixture = try AccountInspectionFixture()
+    let first = try fixture.router.select(cwd: fixture.root.url.path)
+    for _ in 0..<3 {
+      #expect(try fixture.router.select(cwd: fixture.root.url.path) === first)
+    }
+    #expect(fixture.calls == ["auth", "models", "usage", "usage", "usage", "usage"])
+    fixture.change { $0.exhausted.insert(first.credential.accountID) }
+    #expect(
+      try fixture.router.select(cwd: fixture.root.url.path).account.id == fixture.accounts[1].id)
+    fixture.change { $0.exhausted.removeAll() }
+    #expect(try fixture.router.select(cwd: fixture.root.url.path).account.id == first.account.id)
+  }
+
+  @Test
+  func unknownQuotaKeepsPriorityAndDoesNotPoisonAValidBinding() throws {
+    let fixture = try AccountInspectionFixture()
+    let first = try fixture.router.select(cwd: fixture.root.url.path)
+    fixture.change { $0.metadataFailure = .usage }
+    #expect(try fixture.router.select(cwd: fixture.root.url.path) === first)
+    #expect(try fixture.router.bound(first.account.id) === first)
+    try fixture.save(fixture.accounts.reversed())
+    #expect(
+      try fixture.router.select(cwd: fixture.root.url.path).account.id == fixture.accounts[1].id)
+    #expect(fixture.warnings == [.transport, .transport])
+  }
+
+  @Test
+  func coldBindingRequiresCapabilitiesButNeverChecksQuota() throws {
+    let fixture = try AccountInspectionFixture()
+    fixture.change { $0.metadataFailure = .usage }
+    #expect(try fixture.router.bound(fixture.accounts[0].id).account.id == fixture.accounts[0].id)
+    #expect(fixture.calls == ["auth", "models"])
+  }
+
+  @Test
+  func allConfirmedExhaustedAccountsRemainAnError() throws {
+    let fixture = try AccountInspectionFixture()
+    fixture.change { $0.exhausted = Set(fixture.accounts.map { $0.id.uuidString }) }
+    #expect(throws: RouterFailure.self) { try fixture.router.select(cwd: fixture.root.url.path) }
+    #expect(fixture.calls.filter { $0 == "usage" }.count == 2)
+    #expect(fixture.warnings.isEmpty)
+  }
+
+  @Test
+  func duplicatePromptHooksDoNotRepeatSelectionWithinTheSameTurn() throws {
+    let fixture = try AccountInspectionFixture()
+    let runtime = try RouterRuntime(
+      root: fixture.root.url, accounts: fixture.router,
+      connect: { _, _ in fatalError("The hook fixture must not connect to a model.") })
+    defer { runtime.stop() }
+    for turn in ["first", "first", "second"] {
+      _ = try runtime.hook([
+        "session_id": "thread", "turn_id": turn, "hook_event_name": "UserPromptSubmit",
+        "cwd": fixture.root.url.path,
+      ])
+    }
+    #expect(fixture.calls.filter { $0 == "usage" }.count == 2)
+    #expect(try runtime.ledger.bound("thread/first") == fixture.accounts[0].id)
+    #expect(try runtime.ledger.bound("thread/second") == fixture.accounts[0].id)
+  }
+
 }
 
 private final class AccountInspectionFixture: @unchecked Sendable {
@@ -238,12 +317,14 @@ private final class AccountInspectionFixture: @unchecked Sendable {
     var authenticationRejection: RouterAuthenticationRejection?
     var loginRequired = false
     var metadataRejectsCredentials = false
+    var quotaRejectsCredentials = false
     var metadataFailure: Failure?
     var expiry: Date?
     var workspace: String?
     var exhausted = Set<String>()
     var metadataGate: (DispatchSemaphore, DispatchSemaphore)?
     var calls: [String] = []
+    var warnings: [RouterQuotaUnavailable] = []
   }
 
   let root: RouterTestDirectory
@@ -253,11 +334,16 @@ private final class AccountInspectionFixture: @unchecked Sendable {
   private var state = State()
   private(set) var router: RouterAccounts!
   var calls: [String] { lock.withLock { state.calls } }
+  var warnings: [RouterQuotaUnavailable] { lock.withLock { state.warnings } }
 
   init() throws {
     root = try RouterTestDirectory()
     accounts = try ["first@example.com", "second@example.com"].map {
       try TurnrailAccount(id: UUID(), email: $0, planType: .pro)
+    }
+    for account in accounts {
+      try RouterJSON.privateDirectory(
+        root.url.appending(path: "accounts/\(account.id.uuidString.lowercased())/auth-home"))
     }
     try save(accounts)
     router = try makeRouter()
@@ -290,10 +376,18 @@ private final class AccountInspectionFixture: @unchecked Sendable {
             expiresAt: self.state.expiry ?? now.addingTimeInterval(3_600))
         }
       },
-      get: { [unowned self] url, credential in
-        let operation = url.path == "/backend-api/wham/usage" ? "usage" : "models"
+      get: { [unowned self] url, _ in
+        #expect(url.path == "/backend-api/codex/models")
+        return try self.lock.withLock {
+          self.state.calls.append("models")
+          if self.state.metadataRejectsCredentials { throw RouterAccountUnavailable.loginRequired }
+          if self.state.metadataFailure == .models { throw Failure.models }
+          return ["models": [["slug": "fixture"]]]
+        }
+      },
+      readQuota: { [unowned self] credential, _ in
         let snapshot = self.lock.withLock {
-          self.state.calls.append(operation)
+          self.state.calls.append("usage")
           let snapshot = self.state
           self.state.metadataGate = nil
           return snapshot
@@ -304,14 +398,12 @@ private final class AccountInspectionFixture: @unchecked Sendable {
             throw RouterFailure("Synthetic inspection gate timed out.")
           }
         }
-        if snapshot.metadataRejectsCredentials { throw RouterAccountUnavailable.loginRequired }
-        if operation == "usage" {
-          if snapshot.metadataFailure == .usage { throw Failure.usage }
-          let exhausted = snapshot.exhausted.contains(credential.accountID)
-          return ["rate_limit": ["allowed": !exhausted, "limit_reached": exhausted]]
-        }
-        if snapshot.metadataFailure == .models { throw Failure.models }
-        return ["models": [["slug": "fixture"]]]
+        if snapshot.quotaRejectsCredentials { throw RouterAccountUnavailable.loginRequired }
+        if snapshot.metadataFailure == .usage { return .unavailable(.transport) }
+        return snapshot.exhausted.contains(credential.accountID) ? .exhausted : .available
+      }, quotaWait: 2,
+      reportQuotaUnavailable: { [unowned self] warning in
+        self.lock.withLock { self.state.warnings.append(warning) }
       }, now: { [unowned self] in self.lock.withLock { self.state.now } })
   }
 }

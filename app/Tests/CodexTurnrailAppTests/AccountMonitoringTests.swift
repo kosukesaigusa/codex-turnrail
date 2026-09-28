@@ -38,19 +38,16 @@ struct AccountMonitoringTests {
   }
 
   @Test
-  func refreshesUsageAtTheIntervalAndManuallyAndReplacesFailures() async throws {
+  func refreshesUsageOnRequestAndReplacesFailures() async throws {
     let fixture = try Fixture()
     defer { fixture.remove() }
     let reads = UsageSequence()
     let model = fixture.model(usageReader: AccountUsageReader { _, _ in try await reads.read() })
-    let start = Date(timeIntervalSince1970: 1_789_099_140)
-
-    await model.refreshAccountData(at: start)
+    model.refreshCompatibility()
+    await model.refreshAllAuthStatuses()
     #expect(await reads.count == 1)
     #expect(model.usageStatusByAccountID[fixture.account.id] == .available(try usage(used: 10)))
-    await model.refreshAccountData(at: start.addingTimeInterval(59))
-    #expect(await reads.count == 1)
-    await model.refreshAccountData(at: start.addingTimeInterval(60))
+    await model.refreshAllAuthStatuses()
     #expect(await reads.count == 2)
     #expect(model.usageStatusByAccountID[fixture.account.id] == .available(try usage(used: 20)))
 
@@ -61,9 +58,25 @@ struct AccountMonitoringTests {
       Issue.record("The last successful quota must not hide the read failure")
       return
     }
+    #expect(model.authStatusByAccountID[fixture.account.id] == .loggedIn)
+    #expect(model.canLaunch)
     await model.refreshAllAuthStatuses()
     #expect(model.accountIssue(for: fixture.account) == nil)
     #expect(model.usageStatusByAccountID[fixture.account.id] == .available(try usage(used: 40)))
+  }
+
+  @Test
+  func anExplicitCredentialRejectionStillRequiresSignIn() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let model = fixture.model(
+      usageReader: AccountUsageReader { _, _ in
+        throw AccountReaderError.authenticationRequired
+      })
+    model.refreshCompatibility()
+    await model.refreshAllAuthStatuses()
+    #expect(model.accountIssue(for: fixture.account)?.canReauthenticate == true)
+    #expect(!model.canLaunch)
   }
 
   @Test
@@ -73,7 +86,7 @@ struct AccountMonitoringTests {
     let reads = UsageSequence()
     let model = fixture.model(usageReader: AccountUsageReader { _, _ in try await reads.read() })
     let start = Date(timeIntervalSince1970: 1_789_099_140)
-    await model.refreshAccountData(at: start)
+    await model.refreshAllAuthStatuses()
     #expect(model.lastUsedByAccountID[fixture.account.id] == .neverUsed)
     let recordURL = try fixture.store.ensureAuthHome(forAccountID: fixture.account.id)
       .deletingLastPathComponent().appending(path: "last-used.json")
@@ -82,11 +95,11 @@ struct AccountMonitoringTests {
       "accountId": fixture.account.id.uuidString,
       "startedAtUnixSeconds": Int(start.timeIntervalSince1970),
     ]).write(to: recordURL, options: .atomic)
-    await model.refreshAccountData(at: start.addingTimeInterval(5))
+    model.refreshLastUsed()
     #expect(model.lastUsedByAccountID[fixture.account.id] == .used(start))
     #expect(await reads.count == 1)
     try Data("{".utf8).write(to: recordURL, options: .atomic)
-    await model.refreshAccountData(at: start.addingTimeInterval(10))
+    model.refreshLastUsed()
     guard case .failed = model.lastUsedByAccountID[fixture.account.id] else {
       Issue.record("Corrupt Last used metadata must produce an error")
       return
@@ -132,6 +145,8 @@ private struct Fixture {
       to: store.loadOrInitialize()
     )
     account = try #require(state.accounts.first)
+    _ = try store.updateRouting(
+      AccountRoutingConfiguration(defaultAccountIDs: [account.id], directoryRules: []), in: state)
   }
 
   func model(usageReader: AccountUsageReader) -> TurnrailViewModel {

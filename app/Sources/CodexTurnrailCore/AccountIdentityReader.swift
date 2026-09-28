@@ -21,6 +21,7 @@ public struct AccountServerFailure: Equatable, Sendable {
 }
 
 public enum AccountReaderError: LocalizedError, Equatable {
+  case authenticationRequired
   case timedOut
   case engineExited(Int32, String)
   case invalidResponse
@@ -32,6 +33,8 @@ public enum AccountReaderError: LocalizedError, Equatable {
 
   public var errorDescription: String? {
     switch self {
+    case .authenticationRequired:
+      "This account needs to sign in again."
     case .timedOut:
       "Timed out while reading the ChatGPT account."
     case .engineExited(let status, let message):

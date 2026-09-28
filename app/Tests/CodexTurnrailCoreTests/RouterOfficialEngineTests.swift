@@ -513,10 +513,10 @@ final class FixtureAccounts: RouterAccountProviding, @unchecked Sendable {
       accessToken: "SYNTHETIC_NOT_SENT_TO_NETWORK", accountID: "fixture", expiresAt: .distantFuture)
     first = RouterAccountSnapshot(
       account: try TurnrailAccount(id: UUID(), email: "first@example.com", planType: .pro),
-      credential: credential, models: [model], usable: true, inspectedAt: Date())
+      credential: credential, models: [model], inspectedAt: Date())
     second = RouterAccountSnapshot(
       account: try TurnrailAccount(id: UUID(), email: "second@example.com", planType: .pro),
-      credential: credential, models: [model], usable: true, inspectedAt: Date())
+      credential: credential, models: [model], inspectedAt: Date())
     selected = first.account.id
     for account in [first, second] {
       try RouterJSON.privateDirectory(

@@ -21,7 +21,8 @@ enum RouterSearch {
   }
 
   static func send(_ request: URLRequest) throws -> Data {
-    let (data, status) = try RouterHTTP.exchange(request, maximumBytes: maximumBytes)
+    let (data, status) = try RouterHTTP.exchange(
+      request, maximumBytes: maximumBytes, deadline: .now() + 65)
     guard status == 200 else {
       throw RouterFailure("Web search failed for the bound account (HTTP \(status)).")
     }

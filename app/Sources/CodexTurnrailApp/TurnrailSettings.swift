@@ -26,6 +26,7 @@ struct TurnrailSettings: View {
   @ObservedObject var model: TurnrailViewModel
   @Environment(\.openURL) private var openURL
   @Environment(\.timeZone) private var timeZone
+  @Environment(\.controlActiveState) private var controlActiveState
   @State private var page: SettingsPage = .folders
   @State private var expandedFolders: Set<AccountRoutingScope> = [.defaultRule]
   @State private var accountPendingRemoval: TurnrailAccount?
@@ -65,16 +66,12 @@ struct TurnrailSettings: View {
       .background(Color(nsColor: .windowBackgroundColor))
     }
     .tint(.blue)
-    .task { await model.monitorAccounts() }
     .task { await model.monitorLastUsed() }
     .onAppear { model.refreshApplicationState() }
-    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
-    {
-      _ in Task { await model.refreshAllAuthStatuses() }
+    .onChange(of: controlActiveState, initial: true) { _, state in
+      guard state == .key else { return }
+      Task { await model.refreshAllAuthStatuses() }
     }
-    .onReceive(
-      NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
-    ) { _ in Task { await model.refreshAllAuthStatuses() } }
     .onReceive(
       NSWorkspace.shared.notificationCenter.publisher(
         for: NSWorkspace.didLaunchApplicationNotification)
