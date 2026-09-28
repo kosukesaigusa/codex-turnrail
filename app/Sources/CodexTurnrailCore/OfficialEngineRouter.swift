@@ -27,9 +27,8 @@ public enum OfficialEngineRouter {
       try RouterHelperProcess.replace(
         engine: engine, arguments: arguments, environment: environment)
     }
-    guard let rootPath = environment["CODEX_TURNRAIL_ROOT"], rootPath.hasPrefix("/") else {
-      throw RouterFailure("CODEX_TURNRAIL_ROOT must name the account registry.")
-    }
+    let input = try RouterEngineInput(FileHandle.standardInput)
+    guard input.hasInitialization else { return 0 }
     // This is the official CLI's documented default home, not a routing fallback.
     let home: URL
     if let configured = environment["CODEX_HOME"] {
@@ -38,13 +37,29 @@ public enum OfficialEngineRouter {
       home = try RouterDirectory.canonical(
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".codex").path)
     }
-    try RouterHelperConfiguration.synchronizePlugin(
-      home: home, router: executable, engine: engine, appVersion: installed.identity.appVersion)
-    let runtime = try RouterRuntime(
-      root: URL(filePath: rootPath), engine: engine, engineVersion: installed.identity.cliVersion)
-    defer { runtime.stop() }
-    runtime.start()
-    let overrides = try runtime.configuration(engine: engine, home: home, executable: executable)
+    let runtime: RouterRuntime?
+    let overrides: [String]
+    if input.policyOnly {
+      runtime = nil
+      overrides = []
+    } else {
+      guard let rootPath = environment["CODEX_TURNRAIL_ROOT"], rootPath.hasPrefix("/") else {
+        throw RouterFailure("CODEX_TURNRAIL_ROOT must name the account registry.")
+      }
+      try RouterHelperConfiguration.synchronizePlugin(
+        home: home, router: executable, engine: engine, appVersion: installed.identity.appVersion)
+      let routing = try RouterRuntime(
+        root: URL(filePath: rootPath), engine: engine, engineVersion: installed.identity.cliVersion)
+      do {
+        routing.start()
+        overrides = try routing.configuration(engine: engine, home: home, executable: executable)
+      } catch {
+        routing.stop()
+        throw error
+      }
+      runtime = routing
+    }
+    defer { runtime?.stop() }
     let childEnvironment = RouterHelperProcess.environment(environment, engine: engine)
     let child = try RouterEngineProcess(
       executable: engine, arguments: arguments + overrides.flatMap { ["-c", $0] },
@@ -57,7 +72,7 @@ public enum OfficialEngineRouter {
       let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
       source.setEventHandler {
         child.terminate()
-        runtime.stop()
+        runtime?.stop()
       }
       source.resume()
       signals.append(source)
@@ -75,18 +90,21 @@ public enum OfficialEngineRouter {
         worker.leave()
       }
       do {
-        let reader = EngineLineReader(FileHandle.standardInput)
-        while let raw = try reader.next() {
+        while let raw = try input.next() {
           let message = try RouterJSON.object(raw)
           do {
-            if let method = message["method"] as? String,
-              RouterHelperConfiguration.loadingMethods.contains(method)
-            {
-              try RouterHelperConfiguration.synchronizePlugin(
-                home: home, router: executable, engine: engine,
-                appVersion: installed.identity.appVersion)
+            if input.policyOnly {
+              try RouterStartupPolicy.validate(message)
+            } else {
+              if let method = message["method"] as? String,
+                RouterHelperConfiguration.loadingMethods.contains(method)
+              {
+                try RouterHelperConfiguration.synchronizePlugin(
+                  home: home, router: executable, engine: engine,
+                  appVersion: installed.identity.appVersion)
+              }
+              try observer.request(message)
             }
-            try observer.request(message)
           } catch {
             guard let id = message["id"] else { throw error }
             var reply = try RouterJSON.data([
@@ -107,7 +125,9 @@ public enum OfficialEngineRouter {
     let reader = EngineLineReader(child.output)
     while let raw = try reader.next() {
       let message = try RouterJSON.object(raw)
-      do { try observer.response(message, register: runtime.registerTitle) } catch {
+      do {
+        if let runtime { try observer.response(message, register: runtime.registerTitle) }
+      } catch {
         // A title-routing failure belongs to that request, not to every active task.
         guard message["method"] == nil, let id = message["id"] else { throw error }
         var reply = try RouterJSON.data([

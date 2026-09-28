@@ -116,7 +116,6 @@ final class TurnrailViewModel: ObservableObject {
   private let engineURLResult: Result<URL, Error>
   private let routerURLResult: Result<URL, Error>
   private let registryStoreResult: Result<AccountRegistryStore, Error>
-  private var lastRefreshAt: Date?
   private var operationByAccountID: [UUID: UUID] = [:]
   private var loginTask: Task<Void, Never>?
 
@@ -326,17 +325,6 @@ final class TurnrailViewModel: ObservableObject {
     loginTask = nil
   }
 
-  func monitorAccounts() async {
-    while !Task.isCancelled {
-      await refreshAccountData(at: Date())
-      do {
-        try await Task.sleep(for: .seconds(5))
-      } catch {
-        return
-      }
-    }
-  }
-
   func monitorLastUsed() async {
     while !Task.isCancelled {
       refreshLastUsed()
@@ -348,22 +336,9 @@ final class TurnrailViewModel: ObservableObject {
     }
   }
 
-  func refreshAccountData(at now: Date) async {
-    refreshLastUsed()
-    if let lastRefreshAt, (0..<60).contains(now.timeIntervalSince(lastRefreshAt)) {
-      return
-    }
-    await refreshAllAuthStatuses(at: now)
-  }
-
   func refreshAllAuthStatuses() async {
-    await refreshAllAuthStatuses(at: Date())
-  }
-
-  private func refreshAllAuthStatuses(at now: Date) async {
     guard !isRefreshingAccounts else { return }
     isRefreshingAccounts = true
-    lastRefreshAt = now
     refreshLastUsed()
     defer { isRefreshingAccounts = false }
     for account in registryState.accounts {
@@ -565,7 +540,7 @@ final class TurnrailViewModel: ObservableObject {
     }
   }
 
-  private func refreshLastUsed() {
+  func refreshLastUsed() {
     do {
       let reader = AccountLastUsedReader(rootURL: try registryStoreResult.get().rootURL)
       lastUsedByAccountID = Dictionary(
@@ -595,6 +570,11 @@ final class TurnrailViewModel: ObservableObject {
     source: AccountIssue.Source,
     error: Error
   ) -> AccountIssue {
+    if error as? AccountReaderError == .authenticationRequired {
+      return AccountIssue(
+        accountID: accountID, source: source, details: error.localizedDescription,
+        recoveryAction: .reauthenticate)
+    }
     if let readerError = error as? AccountReaderError,
       case .serverError(let failure) = readerError
     {

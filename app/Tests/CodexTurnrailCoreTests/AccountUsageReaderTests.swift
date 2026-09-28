@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -5,10 +6,45 @@ import Testing
 
 struct AccountUsageReaderTests {
   @Test
-  func buildsTheExactRateLimitsRequest() {
-    #expect(
-      AccountUsageProtocol.rateLimitsReadRequest
-        == #"{"id":3,"method":"account/rateLimits/read"}"#)
+  func quotaFetchReleasesTheAuthenticationLockAndDoesNotHideFailure() throws {
+    let root = try RouterTestDirectory()
+    let descriptor = open(
+      root.url.appending(path: ".turnrail-auth.lock").path, O_CREAT | O_RDWR, 0o600)
+    try #require(descriptor >= 0)
+    defer { close(descriptor) }
+    enum FetchError: Error { case unavailable }
+    #expect(throws: FetchError.self) {
+      try AccountUsageInspection.read(
+        home: root.url,
+        authenticate: {
+          #expect(flock(descriptor, LOCK_EX | LOCK_NB) != 0)
+          return RouterCredential(
+            accessToken: "synthetic", accountID: "fixture", expiresAt: .distantFuture)
+        },
+        fetch: { _ in
+          #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+          flock(descriptor, LOCK_UN)
+          throw FetchError.unavailable
+        })
+    }
+    #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+    flock(descriptor, LOCK_UN)
+  }
+
+  @Test
+  func failedAuthenticationCannotStartAQuotaRequest() throws {
+    let root = try RouterTestDirectory()
+    var fetched = false
+    #expect(throws: RouterAccountUnavailable.self) {
+      try AccountUsageInspection.read(
+        home: root.url,
+        authenticate: { throw RouterAccountUnavailable.loginRequired },
+        fetch: { _ in
+          fetched = true
+          return AccountRateLimits(buckets: [], resetCredits: nil)
+        })
+    }
+    #expect(!fetched)
   }
 
   @Test

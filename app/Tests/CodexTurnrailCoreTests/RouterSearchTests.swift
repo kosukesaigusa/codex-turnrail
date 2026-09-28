@@ -124,11 +124,12 @@ struct RouterSearchTests {
     defer { listener.stop() }
     let url = URL(string: "http://127.0.0.1:\(listener.port)")!
     let (body, status) = try RouterHTTP.exchange(
-      URLRequest(url: url.appending(path: "redirect")), maximumBytes: 1024)
+      URLRequest(url: url.appending(path: "redirect")), maximumBytes: 1024, deadline: .now() + 65)
     #expect(status == 302)
     #expect(body.isEmpty)
     #expect(throws: RouterFailure.self) {
-      try RouterHTTP.exchange(URLRequest(url: url.appending(path: "large")), maximumBytes: 1024)
+      try RouterHTTP.exchange(
+        URLRequest(url: url.appending(path: "large")), maximumBytes: 1024, deadline: .now() + 65)
     }
   }
 
@@ -155,7 +156,7 @@ private final class SearchAccounts: RouterAccountProviding, @unchecked Sendable 
       account: try! TurnrailAccount(id: UUID(), email: "bound@example.com", planType: .pro),
       credential: RouterCredential(
         accessToken: "BOUND_ACCOUNT", accountID: "bound-workspace", expiresAt: .distantFuture),
-      models: [["slug": "fixture"]], usable: true, inspectedAt: Date())
+      models: [["slug": "fixture"]], inspectedAt: Date())
   }
   func select(cwd: String) throws -> RouterAccountSnapshot {
     throw RouterFailure("A web search must not select an account.")

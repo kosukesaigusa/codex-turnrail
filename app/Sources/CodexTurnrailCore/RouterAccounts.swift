@@ -15,7 +15,8 @@ final class RouterHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let data: Data
     let status: Int
     do {
-      (data, status) = try Self.exchange(request, maximumBytes: 8 * 1024 * 1024)
+      (data, status) = try Self.exchange(
+        request, maximumBytes: 8 * 1024 * 1024, deadline: .now() + 65)
     } catch {
       let operation: String
       switch url.path {
@@ -33,20 +34,29 @@ final class RouterHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
   }
 
   /// A single bounded request; redirects, cookies, caching, and retries are disabled.
-  static func exchange(_ request: URLRequest, maximumBytes: Int) throws -> (Data, Int) {
+  static func exchange(
+    _ request: URLRequest, maximumBytes: Int, deadline: DispatchTime
+  ) throws -> (Data, Int) {
+    let started = DispatchTime.now()
+    guard deadline > started else { throw RouterHTTPDeadlineExceeded() }
+    let remaining = Double(deadline.uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000_000
     let result = RouterHTTPResult(maximumBytes: maximumBytes)
     let config = URLSessionConfiguration.ephemeral
-    config.timeoutIntervalForRequest = 30
-    config.timeoutIntervalForResource = 60
+    config.timeoutIntervalForRequest = min(30, remaining)
+    config.timeoutIntervalForResource = min(60, remaining)
     config.httpShouldSetCookies = false
     config.urlCache = nil
     let session = URLSession(configuration: config, delegate: result, delegateQueue: nil)
     defer { session.invalidateAndCancel() }
     session.dataTask(with: request).resume()
-    guard result.ready.wait(timeout: .now() + 65) == .success else {
-      throw RouterFailure("The HTTP request timed out. No request was replayed.")
+    guard result.ready.wait(timeout: deadline) == .success else {
+      throw RouterHTTPDeadlineExceeded()
     }
     if let error = result.error {
+      let cause = error as NSError
+      if cause.domain == NSURLErrorDomain && cause.code == NSURLErrorTimedOut {
+        throw RouterHTTPDeadlineExceeded()
+      }
       throw RouterInspectionFailure.transport(error)
     }
     guard let response = result.response as? HTTPURLResponse else {
@@ -54,6 +64,10 @@ final class RouterHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     }
     return (result.data, response.statusCode)
   }
+}
+
+struct RouterHTTPDeadlineExceeded: LocalizedError {
+  var errorDescription: String? { "The HTTP request timed out. No request was replayed." }
 }
 
 private final class RouterHTTPResult: NSObject, URLSessionDataDelegate, @unchecked Sendable {
@@ -101,16 +115,13 @@ final class RouterAccountSnapshot: @unchecked Sendable {
   let credential: RouterCredential
   let models: [[String: Any]]
   let inspectedAt: Date
-  let usable: Bool
-
   init(
-    account: TurnrailAccount, credential: RouterCredential, models: [[String: Any]], usable: Bool,
+    account: TurnrailAccount, credential: RouterCredential, models: [[String: Any]],
     inspectedAt: Date
   ) {
     self.account = account
     self.credential = credential
     self.models = models
-    self.usable = usable
     self.inspectedAt = inspectedAt
   }
 }
@@ -127,6 +138,9 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
   private let modelsURL: URL
   private let authenticate: (TurnrailAccount, URL, Date) throws -> RouterCredential
   private let get: (URL, RouterCredential) throws -> [String: Any]
+  private let readQuota: (RouterCredential, DispatchTime) throws -> RouterQuotaAvailability
+  private let quotaWait: TimeInterval
+  private let reportQuotaUnavailable: (RouterQuotaUnavailable) -> Void
   private let now: () -> Date
   private let lock = NSRecursiveLock()
   private let cacheLock = NSLock()
@@ -145,18 +159,38 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
           return try RouterAuthentication.read(
             expectedEmail: account.email, now: now, request: rpc.request)
         }
-      }, get: RouterHTTP().get, now: Date.init)
+      }, get: RouterHTTP().get,
+      readQuota: { credential, deadline in
+        try RouterQuotaReader.read(
+          url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!,
+          credential: credential, deadline: deadline)
+      }, quotaWait: 2,
+      reportQuotaUnavailable: { reason in
+        let message =
+          "Quota inspection unavailable [\(reason.diagnostic)]. "
+          + "Continuing with the validated assigned account.\n"
+        try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
+      }, now: Date.init)
   }
 
   init(
     root: URL, engineVersion: String,
     authenticate: @escaping (TurnrailAccount, URL, Date) throws -> RouterCredential,
     get: @escaping (URL, RouterCredential) throws -> [String: Any],
+    readQuota: @escaping (RouterCredential, DispatchTime) throws -> RouterQuotaAvailability,
+    quotaWait: TimeInterval,
+    reportQuotaUnavailable: @escaping (RouterQuotaUnavailable) -> Void,
     now: @escaping () -> Date
   ) throws {
+    guard quotaWait.isFinite && quotaWait > 0 else {
+      throw RouterFailure("The quota inspection budget must be positive and finite.")
+    }
     self.root = root
     self.authenticate = authenticate
     self.get = get
+    self.readQuota = readQuota
+    self.quotaWait = quotaWait
+    self.reportQuotaUnavailable = reportQuotaUnavailable
     self.now = now
     modelsURL = try Self.modelCatalogURL(engineVersion: engineVersion)
   }
@@ -188,14 +222,31 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
     guard !ordered.isEmpty else {
       throw RouterFailure("No accounts are allowed for this folder. Assign an account in Turnrail.")
     }
+    var quotaBudget = RouterQuotaBudget(seconds: quotaWait)
     for id in ordered {
       guard let account = state.accounts.first(where: { $0.id == id }) else {
         throw RouterFailure("The folder references an unknown account.")
       }
       do {
         let snapshot = try inspect(account)
-        if snapshot.usable { return snapshot }
-      } catch is RouterAccountUnavailable { continue }
+        // Optional quota HTTP runs after required validation releases its lock.
+        let availability = try quotaBudget.read { deadline in
+          try readQuota(snapshot.credential, deadline)
+        }
+        guard snapshot.credential.expiresAt > now() else {
+          throw RouterAccountUnavailable.loginRequired
+        }
+        switch availability {
+        case .available: return snapshot
+        case .exhausted: continue
+        case .unavailable(let reason):
+          reportQuotaUnavailable(reason)
+          return snapshot
+        }
+      } catch let error as RouterAccountUnavailable {
+        if case .loginRequired = error { cacheLock.withLock { _ = rejected.insert(id) } }
+        continue
+      }
     }
     throw RouterFailure(
       "All accounts allowed for this folder need sign-in or have exhausted their usage limits.")
@@ -220,7 +271,7 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
       if saved.credential.expiresAt.timeIntervalSince(timestamp) > 60 { return saved }
       let credential = try validatedCredential(account, at: timestamp)
       let updated = RouterAccountSnapshot(
-        account: account, credential: credential, models: saved.models, usable: saved.usable,
+        account: account, credential: credential, models: saved.models,
         inspectedAt: saved.inspectedAt)
       cacheLock.withLock { cache[id] = updated }
       return updated
@@ -242,22 +293,9 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
           return saved
         }
         let credential = try validatedCredential(account, at: timestamp)
-        let usage = try get(
-          URL(string: "https://chatgpt.com/backend-api/wham/usage")!, credential)
-        let usable = try Self.generalQuotaIsUsable(usage)
-        let models = try RouterJSON.array(get(modelsURL, credential), "models")
-        var slugs = Set<String>()
-        for model in models {
-          guard slugs.insert(try RouterJSON.text(model, "slug")).inserted else {
-            throw RouterFailure("The account catalog contains duplicate models.")
-          }
-        }
-        guard !models.isEmpty else {
-          throw RouterFailure("The account returned an empty model catalog.")
-        }
-        guard credential.expiresAt > now() else { throw RouterAccountUnavailable.loginRequired }
+        let models = try validatedModels(credential)
         let snapshot = RouterAccountSnapshot(
-          account: account, credential: credential, models: models, usable: usable,
+          account: account, credential: credential, models: models,
           inspectedAt: timestamp)
         cacheLock.withLock {
           cache[account.id] = snapshot
@@ -334,11 +372,29 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
     let assigned = state.accounts.filter { state.routing.allAllowedAccountIDs.contains($0.id) }
     var catalogs: [[[String: Any]]] = []
     for account in assigned {
-      do { catalogs.append(try inspect(account).models) } catch is RouterAccountUnavailable {
+      do {
+        // Cache verified capabilities only. Each selection reads quota separately.
+        catalogs.append(try inspect(account).models)
+      } catch is RouterAccountUnavailable {
         continue
       }
     }
     return ["models": try RouterModelCatalog.intersection(catalogs)]
+  }
+
+  private func validatedModels(_ credential: RouterCredential) throws -> [[String: Any]] {
+    let models = try RouterJSON.array(get(modelsURL, credential), "models")
+    var slugs = Set<String>()
+    for model in models {
+      guard slugs.insert(try RouterJSON.text(model, "slug")).inserted else {
+        throw RouterFailure("The account catalog contains duplicate models.")
+      }
+    }
+    guard !models.isEmpty else {
+      throw RouterFailure("The account returned an empty model catalog.")
+    }
+    guard credential.expiresAt > now() else { throw RouterAccountUnavailable.loginRequired }
+    return models
   }
 }
 

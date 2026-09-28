@@ -10,17 +10,7 @@ enum RouterAuthentication {
     expectedEmail: String, now: Date,
     request: (String, [String: Any]) throws -> [String: Any]
   ) throws -> RouterCredential {
-    var credential = try token(
-      request("getAuthStatus", ["includeToken": true, "refreshToken": false]))
-    if credential.expiresAt.timeIntervalSince(now) <= 600 {
-      let refreshed = try token(
-        request("getAuthStatus", ["includeToken": true, "refreshToken": true]))
-      guard refreshed.accountID == credential.accountID else {
-        throw RouterAuthenticationRejection.workspaceChanged
-      }
-      credential = refreshed
-    }
-    guard credential.expiresAt > now else { throw RouterAccountUnavailable.loginRequired }
+    let credential = try readCredential(now: now, request: request)
     let identity = try request("account/read", ["refreshToken": false])
     if identity["account"] is NSNull { throw RouterAccountUnavailable.loginRequired }
     let account = try RouterJSON.map(identity, "account")
@@ -38,6 +28,26 @@ enum RouterAuthentication {
     else {
       throw RouterAuthenticationRejection.unverifiedPolicy
     }
+    return credential
+  }
+
+  /// Read or renew credentials while the caller holds the authentication lock.
+  ///
+  /// This alone does not validate workspace routing policy or authorize inference.
+  static func readCredential(
+    now: Date, request: (String, [String: Any]) throws -> [String: Any]
+  ) throws -> RouterCredential {
+    var credential = try token(
+      request("getAuthStatus", ["includeToken": true, "refreshToken": false]))
+    if credential.expiresAt.timeIntervalSince(now) <= 600 {
+      let refreshed = try token(
+        request("getAuthStatus", ["includeToken": true, "refreshToken": true]))
+      guard refreshed.accountID == credential.accountID else {
+        throw RouterAuthenticationRejection.workspaceChanged
+      }
+      credential = refreshed
+    }
+    guard credential.expiresAt > now else { throw RouterAccountUnavailable.loginRequired }
     return credential
   }
 

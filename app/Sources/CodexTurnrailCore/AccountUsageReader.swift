@@ -80,20 +80,64 @@ public struct AccountUsageReader: Sendable {
 
   public static let live = AccountUsageReader { engineURL, authHomeURL in
     try await Task.detached {
-      let line = try AccountAppServerTransport.request(
-        engineURL: engineURL,
-        authHomeURL: authHomeURL,
-        request: AccountUsageProtocol.rateLimitsReadRequest,
-        responseID: 3
-      )
-      return try AccountUsageProtocol.parseRateLimitsResponse(line)
+      do {
+        return try AccountUsageInspection.read(
+          home: authHomeURL,
+          authenticate: {
+            let rpc = try OfficialEngineRPC(
+              engine: engineURL, home: authHomeURL,
+              overrides: ["cli_auth_credentials_store=\"keyring\""])
+            defer { rpc.close() }
+            return try RouterAuthentication.readCredential(now: Date(), request: rpc.request)
+          },
+          fetch: { credential in
+            let rpc = try OfficialEngineRPC(
+              engine: engineURL, home: authHomeURL,
+              overrides: ["cli_auth_credentials_store=\"ephemeral\""])
+            defer { rpc.close() }
+            return try AccountUsageInspection.fetch(credential, request: rpc.request)
+          })
+      } catch RouterAccountUnavailable.loginRequired {
+        throw AccountReaderError.authenticationRequired
+      }
     }.value
   }
 }
 
-enum AccountUsageProtocol {
-  static let rateLimitsReadRequest = #"{"id":3,"method":"account/rateLimits/read"}"#
+/// Only credential access holds the shared authentication lock.
+///
+/// Quota reads run in a separate official Engine with in-memory external auth. It
+/// receives no refresh token and cannot read or update this account's Keychain entry.
+enum AccountUsageInspection {
+  static func read(
+    home: URL, authenticate: () throws -> RouterCredential,
+    fetch: (RouterCredential) throws -> AccountRateLimits
+  ) throws -> AccountRateLimits {
+    let credential = try AccountCredentialStore.withExclusiveAccess(to: home, authenticate)
+    return try fetch(credential)
+  }
 
+  static func fetch(
+    _ credential: RouterCredential,
+    request: (String, [String: Any]) throws -> [String: Any]
+  ) throws -> AccountRateLimits {
+    guard credential.expiresAt > Date() else { throw RouterAccountUnavailable.loginRequired }
+    let login = try request(
+      "account/login/start",
+      [
+        "type": "chatgptAuthTokens", "accessToken": credential.accessToken,
+        "chatgptAccountId": credential.accountID,
+      ])
+    guard login["type"] as? String == "chatgptAuthTokens" else {
+      throw AccountReaderError.invalidResponse
+    }
+    let result = try request("account/rateLimits/read", [:])
+    return try AccountUsageProtocol.parseRateLimitsResponse(
+      RouterJSON.string(["id": 3, "result": result]))
+  }
+}
+
+enum AccountUsageProtocol {
   static func parseRateLimitsResponse(_ line: String) throws -> AccountRateLimits {
     guard let data = line.data(using: .utf8),
       let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
