@@ -77,7 +77,7 @@ struct RouterKeepAliveTests {
     try #require(server.requestReceived.wait(timeout: .now() + 10) == .success)
     let result = RouterAsyncResult<Data>()
     let finished = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    DispatchQueue(label: "RouterKeepAliveTests.receiver").async {
       result.complete(Result { try client.receive() })
       finished.signal()
     }

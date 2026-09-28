@@ -202,19 +202,21 @@ struct RouterAccountLifecycleTests {
     let release = DispatchSemaphore(value: 0)
     let selectionDone = DispatchSemaphore(value: 0)
     let boundDone = DispatchSemaphore(value: 0)
+    let selectionQueue = DispatchQueue(label: "RouterAccountLifecycleTests.selection")
+    let boundQueue = DispatchQueue(label: "RouterAccountLifecycleTests.bound")
     fixture.change {
       $0.now = fixture.started.addingTimeInterval(61)
       $0.metadataGate = (entered, release)
       $0.metadataFailure = .usage
     }
-    DispatchQueue.global().async {
+    selectionQueue.async {
       defer { selectionDone.signal() }
       #expect(throws: AccountInspectionFixture.Failure.self) {
         try fixture.router.select(cwd: fixture.root.url.path)
       }
     }
     #expect(entered.wait(timeout: .now() + 10) == .success)
-    DispatchQueue.global().async {
+    boundQueue.async {
       defer { boundDone.signal() }
       do { #expect(try fixture.router.bound(selected.account.id) === selected) } catch {
         Issue.record(error)
