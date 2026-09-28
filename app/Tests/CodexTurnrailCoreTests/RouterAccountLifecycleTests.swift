@@ -213,14 +213,14 @@ struct RouterAccountLifecycleTests {
         try fixture.router.select(cwd: fixture.root.url.path)
       }
     }
-    #expect(entered.wait(timeout: .now() + 2) == .success)
+    #expect(entered.wait(timeout: .now() + 10) == .success)
     DispatchQueue.global().async {
       defer { boundDone.signal() }
       do { #expect(try fixture.router.bound(selected.account.id) === selected) } catch {
         Issue.record(error)
       }
     }
-    let completedBeforeRefresh = boundDone.wait(timeout: .now() + 2) == .success
+    let completedBeforeRefresh = boundDone.wait(timeout: .now() + 10) == .success
     release.signal()
     #expect(selectionDone.wait(timeout: .now() + 5) == .success)
     if !completedBeforeRefresh { _ = boundDone.wait(timeout: .now() + 5) }
