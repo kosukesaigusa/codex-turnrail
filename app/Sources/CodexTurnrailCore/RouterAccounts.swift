@@ -12,7 +12,19 @@ final class RouterHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     request.allHTTPHeaderFields = credential.headers.merging([
       "Accept": "application/json", "User-Agent": "codex-turnrail/1",
     ]) { _, new in new }
-    let (data, status) = try Self.exchange(request, maximumBytes: 8 * 1024 * 1024)
+    let data: Data
+    let status: Int
+    do {
+      (data, status) = try Self.exchange(request, maximumBytes: 8 * 1024 * 1024)
+    } catch {
+      let operation: String
+      switch url.path {
+      case "/backend-api/wham/usage": operation = "usage"
+      case "/backend-api/codex/models": operation = "model catalog"
+      default: operation = "metadata"
+      }
+      throw RouterFailure("Account \(operation) inspection: \(error.localizedDescription)")
+    }
     if status == 401 { throw RouterAccountUnavailable.loginRequired }
     guard status == 200 else {
       throw RouterFailure("Account inspection failed (HTTP \(status)).")
@@ -32,10 +44,10 @@ final class RouterHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     defer { session.invalidateAndCancel() }
     session.dataTask(with: request).resume()
     guard result.ready.wait(timeout: .now() + 65) == .success else {
-      throw RouterFailure("The account request timed out. No request was replayed.")
+      throw RouterFailure("The HTTP request timed out. No request was replayed.")
     }
-    if result.error != nil {
-      throw RouterFailure("The account request failed. No request was replayed.")
+    if let error = result.error {
+      throw RouterInspectionFailure.transport(error)
     }
     guard let response = result.response as? HTTPURLResponse else {
       throw RouterFailure("The account service returned no HTTP response.")
@@ -112,15 +124,40 @@ protocol RouterAccountProviding: Sendable {
 
 final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
   let root: URL
-  let engine: URL
   private let modelsURL: URL
-  private let http = RouterHTTP()
+  private let authenticate: (TurnrailAccount, URL, Date) throws -> RouterCredential
+  private let get: (URL, RouterCredential) throws -> [String: Any]
+  private let now: () -> Date
   private let lock = NSRecursiveLock()
+  private let cacheLock = NSLock()
   private var cache: [UUID: RouterAccountSnapshot] = [:]
+  private var rejected = Set<UUID>()
 
-  init(root: URL, engine: URL, engineVersion: String) throws {
+  convenience init(root: URL, engine: URL, engineVersion: String) throws {
+    try self.init(
+      root: root, engineVersion: engineVersion,
+      authenticate: { account, home, now in
+        try AccountCredentialStore.withExclusiveAccess(to: home) {
+          // Only the official Engine reads and refreshes saved credentials.
+          let rpc = try OfficialEngineRPC(
+            engine: engine, home: home, overrides: ["cli_auth_credentials_store=\"keyring\""])
+          defer { rpc.close() }
+          return try RouterAuthentication.read(
+            expectedEmail: account.email, now: now, request: rpc.request)
+        }
+      }, get: RouterHTTP().get, now: Date.init)
+  }
+
+  init(
+    root: URL, engineVersion: String,
+    authenticate: @escaping (TurnrailAccount, URL, Date) throws -> RouterCredential,
+    get: @escaping (URL, RouterCredential) throws -> [String: Any],
+    now: @escaping () -> Date
+  ) throws {
     self.root = root
-    self.engine = engine
+    self.authenticate = authenticate
+    self.get = get
+    self.now = now
     modelsURL = try Self.modelCatalogURL(engineVersion: engineVersion)
   }
 
@@ -168,52 +205,105 @@ final class RouterAccounts: RouterAccountProviding, @unchecked Sendable {
     guard let account = try registry().accounts.first(where: { $0.id == id }) else {
       throw RouterFailure("The account bound to this turn was removed. Start a new turn.")
     }
-    // A running turn never silently changes accounts, even when its quota is exhausted.
-    return try inspect(account)
+    // A slow selection refresh must not hold up another turn's valid binding.
+    if let saved = try cachedBinding(account),
+      saved.credential.expiresAt.timeIntervalSince(now()) > 60
+    {
+      return saved
+    }
+    return try lock.withLock {
+      // A cold process must establish identity, workspace policy, and catalog first.
+      guard let saved = try cachedBinding(account) else { return try inspect(account) }
+      let timestamp = now()
+      // Quota and catalogs guide selection. They are not periodic prerequisites for
+      // continuing an established binding; the model service still enforces access.
+      if saved.credential.expiresAt.timeIntervalSince(timestamp) > 60 { return saved }
+      let credential = try validatedCredential(account, at: timestamp)
+      let updated = RouterAccountSnapshot(
+        account: account, credential: credential, models: saved.models, usable: saved.usable,
+        inspectedAt: saved.inspectedAt)
+      cacheLock.withLock { cache[id] = updated }
+      return updated
+    }
   }
 
   func inspect(_ account: TurnrailAccount) throws -> RouterAccountSnapshot {
     try lock.withLock {
-      if let saved = cache[account.id], saved.account == account,
-        Date().timeIntervalSince(saved.inspectedAt) < 60,
-        saved.credential.expiresAt.timeIntervalSinceNow > 60
-      {
-        return saved
-      }
-      let home = root.appending(path: "accounts/\(account.id.uuidString.lowercased())/auth-home")
-      let credential = try inspectAuthentication(account, home: home)
-      let usage = try http.get(
-        URL(string: "https://chatgpt.com/backend-api/wham/usage")!, credential: credential)
-      let usable = try Self.generalQuotaIsUsable(usage)
-      let models = try RouterJSON.array(http.get(modelsURL, credential: credential), "models")
-      var slugs = Set<String>()
-      for model in models {
-        guard slugs.insert(try RouterJSON.text(model, "slug")).inserted else {
-          throw RouterFailure("The account catalog contains duplicate models.")
+      do {
+        let timestamp = now()
+        let cached = cacheLock.withLock {
+          rejected.contains(account.id) ? nil : cache[account.id]
         }
+        if let saved = cached,
+          saved.account == account,
+          timestamp.timeIntervalSince(saved.inspectedAt) < 60,
+          saved.credential.expiresAt.timeIntervalSince(timestamp) > 60
+        {
+          return saved
+        }
+        let credential = try validatedCredential(account, at: timestamp)
+        let usage = try get(
+          URL(string: "https://chatgpt.com/backend-api/wham/usage")!, credential)
+        let usable = try Self.generalQuotaIsUsable(usage)
+        let models = try RouterJSON.array(get(modelsURL, credential), "models")
+        var slugs = Set<String>()
+        for model in models {
+          guard slugs.insert(try RouterJSON.text(model, "slug")).inserted else {
+            throw RouterFailure("The account catalog contains duplicate models.")
+          }
+        }
+        guard !models.isEmpty else {
+          throw RouterFailure("The account returned an empty model catalog.")
+        }
+        guard credential.expiresAt > now() else { throw RouterAccountUnavailable.loginRequired }
+        let snapshot = RouterAccountSnapshot(
+          account: account, credential: credential, models: models, usable: usable,
+          inspectedAt: timestamp)
+        cacheLock.withLock {
+          cache[account.id] = snapshot
+          rejected.remove(account.id)
+        }
+        return snapshot
+      } catch let error as RouterAccountUnavailable {
+        if case .loginRequired = error { cacheLock.withLock { _ = rejected.insert(account.id) } }
+        throw error
       }
-      guard !models.isEmpty else {
-        throw RouterFailure("The account returned an empty model catalog.")
-      }
-      let snapshot = RouterAccountSnapshot(
-        account: account, credential: credential, models: models, usable: usable,
-        inspectedAt: Date())
-      cache[account.id] = snapshot
-      return snapshot
     }
   }
 
-  private func inspectAuthentication(_ account: TurnrailAccount, home: URL) throws
+  private func cachedBinding(_ account: TurnrailAccount) throws -> RouterAccountSnapshot? {
+    try cacheLock.withLock {
+      guard !rejected.contains(account.id) else {
+        throw RouterFailure(
+          "The bound account requires authentication validation. Start a new turn.")
+      }
+      guard let saved = cache[account.id] else { return nil }
+      guard saved.account.email == account.email else {
+        throw RouterFailure("The account bound to this turn changed identity. Start a new turn.")
+      }
+      return saved
+    }
+  }
+
+  private func validatedCredential(_ account: TurnrailAccount, at timestamp: Date) throws
     -> RouterCredential
   {
-    try AccountCredentialStore.withExclusiveAccess(to: home) {
-      // The official Engine owns saved credentials and OAuth refreshes. Routine checks
-      // never rewrite Keychain data or copy it into another Keychain item.
-      let rpc = try OfficialEngineRPC(
-        engine: engine, home: home, overrides: ["cli_auth_credentials_store=\"keyring\""])
-      defer { rpc.close() }
-      return try RouterAuthentication.read(
-        expectedEmail: account.email, now: Date(), request: rpc.request)
+    let home = root.appending(path: "accounts/\(account.id.uuidString.lowercased())/auth-home")
+    do {
+      let credential = try authenticate(account, home, timestamp)
+      if let saved = cacheLock.withLock({ cache[account.id] }) {
+        guard saved.account.email == account.email,
+          saved.credential.accountID == credential.accountID
+        else { throw RouterAuthenticationRejection.workspaceChanged }
+      }
+      guard credential.expiresAt > now() else { throw RouterAccountUnavailable.loginRequired }
+      return credential
+    } catch let error as RouterAccountUnavailable {
+      if case .loginRequired = error { cacheLock.withLock { _ = rejected.insert(account.id) } }
+      throw error
+    } catch let error as RouterAuthenticationRejection {
+      cacheLock.withLock { _ = rejected.insert(account.id) }
+      throw error
     }
   }
 
