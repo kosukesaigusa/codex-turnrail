@@ -1,5 +1,13 @@
 # Verification
 
+## Bound account inspection
+
+The September 28, 2026 regression tests verify that established model and web-search bindings continue beyond the selection cache's 60-second lifetime without repeated authentication, quota, or catalog inspection. Synthetic outages and a blocked concurrent selection refresh do not interrupt a valid binding. Near-expiry renewal updates authentication alone and leaves quota inspection due for the next selection. Removal, identity replacement, expired credentials, confirmed authentication or policy rejection, and changed workspace prevent cached authentication from being reused. New-turn selection retains its quota and priority checks; cold initialization still requires successful inspection.
+
+All 171 Swift tests pass, including 13 new account-lifecycle and diagnostic tests. The release Swift build, formatting, documentation lint, and metadata validation pass. The signed official Engine from ChatGPT `26.924.22138 (11645)`, CLI `0.158.0-alpha.2.1`, passes all sixteen existing routing scenarios with the saved router executable, synthetic accounts, and a loopback model. Separate official-runtime tests verify authentication inspection and desktop-helper policy reads. These integration scenarios validate transport and tool behavior; the account-inspection outage cases use injected services and a clock.
+
+Inspection diagnostics retain only recognized numeric OS/RPC codes and allowlisted workspace-discovery reasons. Tests check that arbitrary messages, tokens, workspace identifiers, and URLs are not reflected. Installed apps and real credentials were not changed by the implementation tests. Real-service recurrence and extended desktop use remain unverified; review was non-fresh self-review by the implementing agent.
+
 ## Temporary network recovery
 
 The September 27, 2026 recovery fixture uses synthetic accounts with the signed official Engine from ChatGPT `26.924.20706 (11431)` and the locally installed `26.924.22138 (11645)`. The Engine completes interrupted turns without a new user message when the connection fails before response creation, during partial assistant text, after a completed tool result, or after tool dispatch before response completion. Changing folder priority during recovery does not change the bound account. A real local marker command executes once and its result is retained in the retry input.

@@ -55,7 +55,7 @@ final class OfficialEngineRPC: @unchecked Sendable {
         if failure.recoveryAction == .reauthenticate {
           throw RouterAccountUnavailable.loginRequired
         }
-        throw RouterFailure("The official Engine rejected \(method).")
+        throw RouterInspectionFailure.rpc(method: method, error: error)
       }
       return try RouterJSON.map(message, "result")
     }

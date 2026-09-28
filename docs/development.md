@@ -36,6 +36,8 @@ Tests remove inherited `CODEX_TURNRAIL_ROOT` from the child environment. The inv
 
 Authentication tests inject protocol responses to verify repeated reads, bounded refresh, and identity, workspace, and expiry checks. The official Engine protocol fixture uses a synthetic credential file in an isolated home and verifies that repeated process launches do not rewrite it. Automated tests do not modify Keychain access permissions. Disabling interactive Keychain operations does not reliably suppress access-control modification dialogs; do not use such modifications as an unattended test fixture.
 
+Account lifecycle tests inject a clock and inspection services to verify continued bound requests during metadata outages, authentication-only renewal, removal and rejection invalidation, and independence from a concurrent slow selection refresh. These tests use an isolated registry and synthetic tokens, without Keychain or real-service requests. New-turn selection and cold initialization still require successful inspection; the continuation tests do not authorize using unverified credentials or unknown model capabilities.
+
 ## Official Engine routing fixture
 
 Build the helper, then run the opt-in fixture with the supported official installation:

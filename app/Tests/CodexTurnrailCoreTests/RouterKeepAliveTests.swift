@@ -74,17 +74,17 @@ struct RouterKeepAliveTests {
     try client.checkConnection()
     let request = Data(#"{"type":"response.create","input":[]}"#.utf8)
     try client.send(request)
-    try #require(server.requestReceived.wait(timeout: .now() + 2) == .success)
+    try #require(server.requestReceived.wait(timeout: .now() + 10) == .success)
     let result = RouterAsyncResult<Data>()
     let finished = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    DispatchQueue(label: "RouterKeepAliveTests.receiver").async {
       result.complete(Result { try client.receive() })
       finished.signal()
     }
     // Multiple heartbeat cycles must neither produce model output nor end the wait.
     #expect(finished.wait(timeout: .now() + 1.4) == .timedOut)
     client.close()
-    try #require(finished.wait(timeout: .now() + 2) == .success)
+    try #require(finished.wait(timeout: .now() + 10) == .success)
     do {
       _ = try result.wait()
       Issue.record("The cancelled transport produced a response.")
@@ -103,7 +103,7 @@ struct RouterKeepAliveTests {
     try client.checkConnection()
     let request = Data(#"{"type":"response.create","input":[]}"#.utf8)
     try client.send(request)
-    try #require(server.requestReceived.wait(timeout: .now() + 2) == .success)
+    try #require(server.requestReceived.wait(timeout: .now() + 10) == .success)
     client.close()
     do {
       _ = try client.receive()

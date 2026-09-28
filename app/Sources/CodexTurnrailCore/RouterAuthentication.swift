@@ -16,7 +16,7 @@ enum RouterAuthentication {
       let refreshed = try token(
         request("getAuthStatus", ["includeToken": true, "refreshToken": true]))
       guard refreshed.accountID == credential.accountID else {
-        throw RouterFailure("Credential refresh changed workspace identity. Sign in again.")
+        throw RouterAuthenticationRejection.workspaceChanged
       }
       credential = refreshed
     }
@@ -27,17 +27,16 @@ enum RouterAuthentication {
     guard account["type"] as? String == "chatgpt",
       try RouterJSON.text(account, "email").lowercased() == expectedEmail.lowercased()
     else {
-      throw RouterFailure("The saved authentication does not match this registered account.")
+      throw RouterAuthenticationRejection.identityMismatch
     }
     let route = try RouterJSON.map(identity, "workspaceRouting")
     guard try RouterJSON.text(route, "chatgptAccountId") == credential.accountID else {
-      throw RouterFailure("The access token does not match the inspected workspace.")
+      throw RouterAuthenticationRejection.workspaceMismatch
     }
     guard route["backendOrigin"] as? String == "https://chatgpt.com",
       route["accountRoutingOverride"] as? String == "NO_CONSTRAINT"
     else {
-      throw RouterFailure(
-        "This account's workspace requires a routing policy that Turnrail has not verified.")
+      throw RouterAuthenticationRejection.unverifiedPolicy
     }
     return credential
   }
@@ -54,5 +53,23 @@ enum RouterAuthentication {
     return RouterCredential(
       accessToken: access, accountID: try RouterJSON.text(identity, "chatgpt_account_id"),
       expiresAt: Date(timeIntervalSince1970: expiry))
+  }
+}
+
+/// Confirmed rejections invalidate cached bindings; an inspection outage does not.
+enum RouterAuthenticationRejection: LocalizedError {
+  case identityMismatch, workspaceMismatch, workspaceChanged, unverifiedPolicy
+
+  var errorDescription: String? {
+    switch self {
+    case .identityMismatch:
+      "The saved authentication does not match this registered account."
+    case .workspaceMismatch:
+      "The access token does not match the inspected workspace."
+    case .workspaceChanged:
+      "The inspected workspace changed. Restart ChatGPT through Turnrail."
+    case .unverifiedPolicy:
+      "This account's workspace requires a routing policy that Turnrail has not verified."
+    }
   }
 }
