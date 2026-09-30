@@ -66,7 +66,7 @@ private final class UsageInspectionBackend: @unchecked Sendable {
     listener = try RouterListener()
     listener.start { [weak self] socket in
       do {
-        let request = try socket.request()
+        guard let request = try Self.request(socket) else { return }
         guard request.path == "/backend-api/wham/usage" else {
           try socket.reply(status: 404, body: ["error": "No synthetic data for this endpoint"])
           return
@@ -101,4 +101,68 @@ private final class UsageInspectionBackend: @unchecked Sendable {
   }
 
   func stop() { listener.stop() }
+
+  static func request(_ socket: RouterSocket) throws -> RouterHTTPRequest? {
+    // The Engine may close a background connection without sending an HTTP request.
+    // Preserve parser failures once any request byte has arrived.
+    var firstByte: UInt8 = 0
+    while true {
+      let count = recv(socket.descriptor, &firstByte, 1, MSG_PEEK)
+      if count < 0 && errno == EINTR { continue }
+      guard count >= 0 else { throw RouterFailure("Could not read the usage fixture connection.") }
+      guard count > 0 else { return nil }
+      return try socket.request()
+    }
+  }
+}
+
+struct UsageInspectionBackendTests {
+  @Test
+  func unusedConnectionsCanCloseBeforeSendingARequest() throws {
+    let pair = try UsageInspectionSocketPair()
+    pair.client.close()
+    #expect(try UsageInspectionBackend.request(pair.server) == nil)
+  }
+
+  @Test(arguments: ["GET /backend-api/wham/usage HTTP/1.1\r\n", "INVALID\r\n\r\n"])
+  func partialAndMalformedRequestsRemainFailures(_ request: String) throws {
+    let pair = try UsageInspectionSocketPair()
+    try pair.client.write(Data(request.utf8))
+    pair.client.close()
+    #expect(throws: RouterFailure.self) {
+      _ = try UsageInspectionBackend.request(pair.server)
+    }
+  }
+
+  @Test
+  func aReceiveTimeoutIsNotAnUnusedClosedConnection() throws {
+    let pair = try UsageInspectionSocketPair()
+    var timeout = timeval(tv_sec: 0, tv_usec: 50_000)
+    try #require(
+      setsockopt(
+        pair.server.descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+        socklen_t(MemoryLayout.size(ofValue: timeout))) == 0)
+    #expect(throws: RouterFailure.self) {
+      _ = try UsageInspectionBackend.request(pair.server)
+    }
+  }
+}
+
+private final class UsageInspectionSocketPair {
+  let server: RouterSocket
+  let client: RouterSocket
+
+  init() throws {
+    var pair: [Int32] = [0, 0]
+    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else {
+      throw RouterFailure("Could not create a usage fixture socket pair.")
+    }
+    server = RouterSocket(pair[0])
+    client = RouterSocket(pair[1])
+  }
+
+  deinit {
+    server.close()
+    client.close()
+  }
 }
