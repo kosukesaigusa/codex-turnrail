@@ -23,8 +23,6 @@ public enum LaunchCommandFactory {
         "--env",
         "CODEX_CLI_PATH=\(routerURL.path)",
         "--env",
-        "CODEX_APP_SERVER_FORCE_CLI=1",
-        "--env",
         "CODEX_TURNRAIL_APP=\(appURL.path)",
         "--env",
         "CODEX_TURNRAIL_ROOT=\(turnrailRootURL.path)",
