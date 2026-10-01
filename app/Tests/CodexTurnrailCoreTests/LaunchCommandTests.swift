@@ -5,7 +5,7 @@ import Testing
 
 struct LaunchCommandTests {
   @Test
-  func createsTheSingleSupportedLaunchPath() {
+  func routesTheLocalCLIWithoutOverridingCloudTransports() {
     let appURL = URL(filePath: "/Applications/ChatGPT.app")
     let routerURL = URL(filePath: "/private/engine/codex")
     let turnrailRootURL = URL(filePath: "/private/turnrail")
@@ -24,8 +24,6 @@ struct LaunchCommandTests {
             "-n",
             "--env",
             "CODEX_CLI_PATH=/private/engine/codex",
-            "--env",
-            "CODEX_APP_SERVER_FORCE_CLI=1",
             "--env",
             "CODEX_TURNRAIL_APP=/Applications/ChatGPT.app",
             "--env",
