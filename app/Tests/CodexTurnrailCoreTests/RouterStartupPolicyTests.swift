@@ -22,8 +22,11 @@ struct RouterStartupPolicyTests {
   @Test
   func policyConnectionCannotCreateTasksRunToolsOrChangeConfiguration() throws {
     try RouterStartupPolicy.validate(["method": "initialized"])
-    for method in ["configRequirements/read", "account/logout"] {
+    for method in ["configRequirements/read", "config/read", "account/logout"] {
       try RouterStartupPolicy.validate(["id": "policy", "method": method, "params": [:]])
+      #expect(throws: RouterFailure.self) {
+        try RouterStartupPolicy.validate(["method": method, "params": [:]])
+      }
     }
     for method in [
       "thread/start", "thread/resume", "thread/fork", "turn/start", "turn/steer",
@@ -40,17 +43,23 @@ struct RouterStartupPolicyTests {
   }
 
   @Test
-  func initializationInspectionPreservesBufferedProtocolMessages() throws {
+  func initializationInspectionPreservesTheCompleteDesktopStartupSequence() throws {
     let pipe = Pipe()
-    let messages = try [startupInitialization(), ["method": "initialized"]].map(RouterJSON.data)
+    let messages = try [
+      startupInitialization(), ["method": "initialized"],
+      ["id": "network-requirements", "method": "configRequirements/read", "params": [:]],
+      ["id": "network-config", "method": "config/read", "params": ["includeLayers": false]],
+    ].map(RouterJSON.data)
     try pipe.fileHandleForWriting.write(
       contentsOf: messages.reduce(Data()) { $0 + $1 + Data([10]) })
     try pipe.fileHandleForWriting.close()
     let input = try RouterEngineInput(pipe.fileHandleForReading)
     #expect(input.hasInitialization)
     #expect(input.policyOnly)
-    #expect(try input.next() == messages[0])
-    #expect(try input.next() == messages[1])
+    for message in messages {
+      #expect(try input.next() == message)
+      try RouterStartupPolicy.validate(RouterJSON.object(message))
+    }
     #expect(try input.next() == nil)
   }
 }
