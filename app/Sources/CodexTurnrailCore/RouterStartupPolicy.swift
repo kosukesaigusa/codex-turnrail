@@ -1,9 +1,9 @@
 import Foundation
 
-/// The desktop uses a dedicated connection to load organization requirements.
+/// The desktop uses a dedicated connection to load organization requirements and configuration.
 ///
 /// This connection must reach the official Engine before account routing starts.
-/// It permits policy reads and the desktop's explicit sign-out flow, never tasks
+/// It permits policy/configuration reads and the desktop's explicit sign-out flow, never tasks
 /// or inference. The initialization envelope comes from the desktop protocol.
 enum RouterStartupPolicy {
   static func isInitialization(_ message: [String: Any]) -> Bool {
@@ -19,7 +19,7 @@ enum RouterStartupPolicy {
     switch message["method"] as? String {
     case "initialize" where isInitialization(message): return
     case "initialized" where message["id"] == nil: return
-    case "configRequirements/read", "account/logout":
+    case "configRequirements/read", "config/read", "account/logout":
       guard message["id"] != nil else { break }
       return
     default: break

@@ -7,18 +7,23 @@ extension RouterOfficialEngineTests {
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
     .timeLimit(.minutes(1)))
-  func desktopStartupReadsOfficialPolicyWithoutRoutingAndPreservesErrors() throws {
+  func desktopStartupReadsPolicyAndConfigurationWithoutRoutingAndPreservesErrors() throws {
     let app = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
     let router = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
     let engine = try OfficialEngineInstallation.verify(app: URL(filePath: app)).paths.launcher
     var officialRequirements: Data?
     var officialError: Data?
+    var officialConfigError: Data?
     for executable in [engine, URL(filePath: router)] {
       let root = try RouterTestDirectory()
       let registry = root.url.appending(path: "unavailable-registry")
       let auth = root.url.appending(path: "auth.json")
-      try RouterJSON.writePrivate(
-        RouterJSON.data(["OPENAI_API_KEY": "SYNTHETIC_STARTUP_POLICY"]), to: auth)
+      let originalAuth = try RouterJSON.data(["OPENAI_API_KEY": "SYNTHETIC_STARTUP_POLICY"])
+      try RouterJSON.writePrivate(originalAuth, to: auth)
+      let configFile = root.url.appending(path: "config.toml")
+      let originalConfig = Data(
+        "approval_policy = \"on-request\"\nmodel_provider = \"openai\"\n".utf8)
+      try RouterJSON.writePrivate(originalConfig, to: configFile)
       var environment = RouterHelperProcess.environment(
         ProcessInfo.processInfo.environment, engine: engine)
       environment["CODEX_HOME"] = root.url.path
@@ -37,13 +42,23 @@ extension RouterOfficialEngineTests {
         officialRequirements = data
       } else {
         #expect(data == officialRequirements)
-        let blocked = try client.request([
-          "id": "blocked-inference", "method": "turn/start", "params": [:],
-        ])
-        #expect(try RouterJSON.map(blocked, "error")["code"] as? Int == -32602)
-        #expect(
-          try RouterJSON.map(blocked, "error")["message"] as? String
-            == "The desktop startup connection only supports organization policy checks.")
+      }
+      let configuration = try client.request([
+        "id": "network-config", "method": "config/read", "params": ["includeLayers": false],
+      ])
+      let config = try RouterJSON.map(RouterJSON.map(configuration, "result"), "config")
+      #expect(try RouterJSON.text(config, "approval_policy") == "on-request")
+      #expect(try RouterJSON.text(config, "model_provider") == "openai")
+      if executable != engine {
+        for method in ["turn/start", "thread/start", "command/exec", "config/value/write"] {
+          let blocked = try client.request([
+            "id": "blocked-\(method)", "method": method, "params": [:],
+          ])
+          #expect(try RouterJSON.map(blocked, "error")["code"] as? Int == -32602)
+          #expect(
+            try RouterJSON.map(blocked, "error")["message"] as? String
+              == "The desktop startup connection only supports organization policy checks.")
+        }
       }
       let invalid = try client.request([
         "id": "invalid-policy", "method": "configRequirements/read", "params": "invalid",
@@ -54,6 +69,17 @@ extension RouterOfficialEngineTests {
       } else {
         #expect(error == officialError)
       }
+      let invalidConfig = try client.request([
+        "id": "invalid-config", "method": "config/read", "params": "invalid",
+      ])
+      let configError = try RouterJSON.data(RouterJSON.map(invalidConfig, "error"))
+      if executable == engine {
+        officialConfigError = configError
+      } else {
+        #expect(configError == officialConfigError)
+      }
+      #expect(try Data(contentsOf: auth) == originalAuth)
+      #expect(try Data(contentsOf: configFile) == originalConfig)
       let logout = try client.request([
         "id": "network-logout", "method": "account/logout", "params": [:],
       ])
@@ -64,6 +90,7 @@ extension RouterOfficialEngineTests {
       ])
       #expect(afterLogout["error"] == nil)
       #expect(!FileManager.default.fileExists(atPath: registry.path))
+      #expect(try Data(contentsOf: configFile) == originalConfig)
     }
   }
 }

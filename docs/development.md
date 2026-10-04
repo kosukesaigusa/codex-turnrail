@@ -51,6 +51,8 @@ Use the actual repository path and a new report path. The fixture verifies OpenA
 
 This command does not restart the desktop app or send real-account inference. Official UI browser behavior, account refresh, and real-service response handling require separate checks.
 
+The official Engine tests also execute the desktop startup sequence: `initialize`, `initialized`, `configRequirements/read`, and `config/read`. They compare the router with the direct official Engine using an isolated home and an unavailable registry, require the original configuration without routing overrides, preserve official validation errors, and reject task creation, inference, commands, and configuration writes. Reading startup settings must leave credentials and user configuration unchanged.
+
 ## Development app and signed package
 
 To run Settings from the build directory:
