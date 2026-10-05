@@ -152,6 +152,7 @@ struct OnboardingTests {
       commandExecutor: CommandExecutor { executable, arguments, _ in
         #expect(executable.path == "/usr/bin/open")
         #expect(arguments.contains("CODEX_CLI_PATH=/unused-test-router"))
+        #expect(arguments.contains("CODEX_TPP_LOCAL_EXECUTOR_CLI_PATH=/unused-test-engine"))
         launches.record(executable.path)
         return CommandResult(exitCode: 0, standardOutput: "", standardError: "")
       },

@@ -53,6 +53,8 @@ This command does not restart the desktop app or send real-account inference. Of
 
 The official Engine tests also execute the desktop startup sequence: `initialize`, `initialized`, `configRequirements/read`, and `config/read`. They compare the router with the direct official Engine using an isolated home and an unavailable registry, require the original configuration without routing overrides, preserve official validation errors, and reject task creation, inference, commands, and configuration writes. Reading startup settings must leave credentials and user configuration unchanged.
 
+The local executor test extracts the CLI settings from the production launch command and starts the signed official Engine with `exec-server --remote`. A loopback registry receives exactly one authenticated registration using synthetic credentials and returns an explicit denial. The test requires that denial to remain an official Engine error, without opening the Turnrail registry or changing credentials and configuration. This verifies the executor entry point; live dot connection and desktop UI checks remain separate.
+
 ## Development app and signed package
 
 To run Settings from the build directory:

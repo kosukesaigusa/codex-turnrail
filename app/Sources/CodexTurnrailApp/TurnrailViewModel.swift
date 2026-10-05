@@ -723,6 +723,7 @@ final class TurnrailViewModel: ObservableObject {
       let command = LaunchCommandFactory.makeCodexTurnrailLaunch(
         appURL: appURL,
         routerURL: routerURL,
+        engineURL: try engineURLResult.get(),
         turnrailRootURL: registryStore.rootURL
       )
       let result = try commandExecutor.execute(
