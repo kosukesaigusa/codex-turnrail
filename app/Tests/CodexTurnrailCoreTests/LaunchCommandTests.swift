@@ -5,14 +5,17 @@ import Testing
 
 struct LaunchCommandTests {
   @Test
-  func routesTheLocalCLIWithoutOverridingCloudTransports() {
+  func routesChatRequestsAndUsesTheOfficialEngineForLocalCloudExecution() {
     let appURL = URL(filePath: "/Applications/ChatGPT.app")
     let routerURL = URL(filePath: "/private/engine/codex")
+    let engineURL = URL(
+      filePath: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex")
     let turnrailRootURL = URL(filePath: "/private/turnrail")
 
     let command = LaunchCommandFactory.makeCodexTurnrailLaunch(
       appURL: appURL,
       routerURL: routerURL,
+      engineURL: engineURL,
       turnrailRootURL: turnrailRootURL
     )
 
@@ -24,6 +27,8 @@ struct LaunchCommandTests {
             "-n",
             "--env",
             "CODEX_CLI_PATH=/private/engine/codex",
+            "--env",
+            "CODEX_TPP_LOCAL_EXECUTOR_CLI_PATH=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
             "--env",
             "CODEX_TURNRAIL_APP=/Applications/ChatGPT.app",
             "--env",
