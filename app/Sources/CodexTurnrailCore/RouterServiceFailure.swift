@@ -5,6 +5,7 @@ struct RouterServiceFailure: LocalizedError, Sendable {
   let description: String
   let isMisalignmentPolicyViolation: Bool
   let isWebSocketConnectionLimit: Bool
+  let permitsEngineRecovery: Bool
   var errorDescription: String? { description }
 
   init(event: [String: Any]) throws {
@@ -35,6 +36,12 @@ struct RouterServiceFailure: LocalizedError, Sendable {
       type == "error" && event["status"] as? Int == 400
       && detail["type"] as? String == "invalid_request_error"
       && detail["code"] as? String == "websocket_connection_limit_reached"
+    permitsEngineRecovery =
+      detail["code"] as? String == "server_error"
+      && ((type == "error" && event["status"] as? Int == 500
+        && detail["type"] as? String == "server_error")
+        || (type == "response.failed"
+          && (detail["type"] == nil || detail["type"] as? String == "server_error")))
     var diagnostics = [type]
     if let status = event["status"] as? Int, (400...599).contains(status) {
       diagnostics.append("HTTP \(status)")
@@ -49,7 +56,20 @@ struct RouterServiceFailure: LocalizedError, Sendable {
     if !recognized { diagnostics.append("reason unavailable or unrecognized") }
     description =
       summary + " [" + diagnostics.joined(separator: "; ") + "] "
-      + "This rejection will not be retried or moved to another account."
+      + (permitsEngineRecovery
+        ? "Recovery is delegated to the official Engine using the bound account."
+        : "This rejection will not be retried or moved to another account.")
+  }
+
+  /// Both official transports recognize this sanitized server error as retryable.
+  func engineRecoveryEvent() throws -> [String: Any] {
+    guard permitsEngineRecovery else {
+      throw RouterFailure("This service failure does not permit Engine recovery.")
+    }
+    return [
+      "type": "response.failed",
+      "response": ["error": ["code": "server_error", "message": description]],
+    ]
   }
 
   /// Retains the official Engine's retry classification without exposing server text or headers.

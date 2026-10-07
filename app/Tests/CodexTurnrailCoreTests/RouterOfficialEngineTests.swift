@@ -478,7 +478,7 @@ struct RouterOfficialEngineTests {
           "connection_recovery",
           "model_wait", "model_wait_cancellation", "engine_idle_timeout",
           "connection_limit_recovery", "http_recovery", "tool_result_recovery",
-          "receive_cancellation_recovery",
+          "receive_cancellation_recovery", "server_error_recovery",
         ]), to: URL(filePath: proof))
     }
   }

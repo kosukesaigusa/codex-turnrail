@@ -364,6 +364,18 @@ final class RouterRuntime: @unchecked Sendable {
           reported = error
         }
       }
+      if let failure = reported as? RouterServiceFailure,
+        failure.permitsEngineRecovery, let currentTurn, let submitted
+      {
+        do {
+          try ledger.interrupt(submitted, turn: currentTurn)
+          try downstream.frame(RouterJSON.data(failure.engineRecoveryEvent()))
+          reportFailure("Engine service recovery: " + failure.localizedDescription)
+          return
+        } catch {
+          reported = error
+        }
+      }
       reportFailure("Model routing: " + reported.localizedDescription)
       if let currentTurn { try? ledger.fail(currentTurn) }
       try? downstream.reject(
