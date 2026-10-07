@@ -44,6 +44,10 @@ struct RouterTransportFailure: LocalizedError {
         URLError.dnsLookupFailed.rawValue, URLError.notConnectedToInternet.rawValue,
       ].contains(code)
     case NSPOSIXErrorDomain:
+      if code == Int(ECANCELED) {
+        // A transport receive can report cancellation without a deliberate local close.
+        return phase == .receive && cause == .transport
+      }
       return [
         ENOTCONN, ECONNRESET, ECONNABORTED, EPIPE, ETIMEDOUT, ENETDOWN,
         ENETUNREACH, EHOSTUNREACH, ECONNREFUSED,
