@@ -30,7 +30,7 @@ enum OfficialEngineConnectionLimitFixture {
       ],
     ]
     provider.choose(provider.first.account.id)
-    backend.reject(event, after: 1, count: 1, afterCreated: false) {
+    backend.reject(event, after: 1, count: 1, at: .empty) {
       // Changing folder priority while reconnecting must not rebind this turn.
       provider.choose(provider.second.account.id)
     }
@@ -68,9 +68,9 @@ enum OfficialEngineConnectionLimitFixture {
     #expect(compactCalls.allSatisfy { $0.account == provider.first.account.id })
     #expect(compactCalls.last?.body.value["previous_response_id"] == nil)
 
-    for (count, afterCreated, expectedRequests) in [(2, false, 2), (1, true, 1)] {
+    for point in [FixtureModel.ResponsePoint.empty, .created] {
       provider.choose(provider.first.account.id)
-      backend.reject(event, after: 0, count: count, afterCreated: afterCreated) {
+      backend.reject(event, after: 0, count: 2, at: point) {
         provider.choose(provider.second.account.id)
       }
       _ = try rpc.request(
@@ -82,7 +82,7 @@ enum OfficialEngineConnectionLimitFixture {
       let stopped = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
       #expect(stopped["status"] as? String == "failed")
       let stoppedCalls = backend.requests(for: try RouterJSON.text(stopped, "id"))
-      #expect(stoppedCalls.count == expectedRequests)
+      #expect(stoppedCalls.count == 2)
       #expect(stoppedCalls.allSatisfy { $0.account == provider.first.account.id })
       #expect(try !RouterJSON.string(stopped).contains("PRIVATE_"))
     }

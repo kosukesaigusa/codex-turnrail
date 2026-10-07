@@ -224,7 +224,7 @@ final class RouterLedger: @unchecked Sendable {
     }
   }
 
-  /// Records an explicit pre-response rejection, permitting one Engine-owned resubmission.
+  /// Records an explicit connection expiry, permitting one Engine-owned resubmission.
   func rejectConnectionLimit(_ fingerprint: String, turn: String) throws {
     try lock.withLock {
       guard let request = try RouterJSON.map(state, "requests")[fingerprint] as? [String: Any],

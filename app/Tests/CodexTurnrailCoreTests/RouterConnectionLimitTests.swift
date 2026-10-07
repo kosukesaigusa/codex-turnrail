@@ -5,7 +5,7 @@ import Testing
 
 struct RouterConnectionLimitTests {
   @Test
-  func onlyTheExplicitPreResponseRejectionIsRecoverable() throws {
+  func onlyTheExplicitConnectionExpiryIsRecoverable() throws {
     let detail: [String: Any] = [
       "type": "invalid_request_error", "code": "websocket_connection_limit_reached",
       "message": "PRIVATE_SERVER_TEXT", "account_id": "PRIVATE_ACCOUNT",

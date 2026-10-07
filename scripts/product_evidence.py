@@ -19,6 +19,7 @@ SCENARIOS = {
     "tool_result_recovery",
     "connection_recovery",
     "connection_limit_recovery",
+    "connection_limit_mid_response_recovery",
     "compaction",
     "failure_recovery",
     "web_search",
