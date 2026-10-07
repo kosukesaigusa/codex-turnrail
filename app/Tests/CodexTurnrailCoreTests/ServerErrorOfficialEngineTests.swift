@@ -79,7 +79,7 @@ extension RouterOfficialEngineTests {
       ] {
         provider.choose(provider.first.account.id)
         // Reject the inference after a completed command; priority changes must not rebind it.
-        backend.reject(event, after: 1, count: 1, afterCreated: true) {
+        backend.reject(event, after: 1, count: 1, at: .created) {
           provider.choose(provider.second.account.id)
         }
         let done = try runServerErrorTurn(rpc, root: root.url)
@@ -117,7 +117,7 @@ extension RouterOfficialEngineTests {
       if !webSocket {
         // With one Engine retry, a persistent server error ends after two HTTP attempts.
         provider.choose(provider.first.account.id)
-        backend.reject(serverError, after: 0, count: 20, afterCreated: true) {
+        backend.reject(serverError, after: 0, count: 20, at: .created) {
           provider.choose(provider.second.account.id)
         }
         let exhausted = try runServerErrorTurn(rpc, root: root.url)

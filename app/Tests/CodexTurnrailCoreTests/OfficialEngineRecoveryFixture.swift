@@ -79,7 +79,7 @@ enum OfficialEngineRecoveryFixture {
     backend.setTool("text(await tools.exec_command(" + (try RouterJSON.string(command)) + "));")
     // Failure before creation, during text, after a completed tool response, and
     // after tool dispatch but before response.completed exercise distinct Engine history paths.
-    for (after, at, expected): (Int, FixtureModel.Interruption, Int) in [
+    for (after, at, expected): (Int, FixtureModel.ResponsePoint, Int) in [
       (0, .empty, 3), (0, .text, 3), (1, .created, 3), (0, .tool, 2),
     ] {
       let thread = try startThread(rpc, root: root.url)
@@ -99,7 +99,7 @@ enum OfficialEngineRecoveryFixture {
       let restored = try RouterJSON.array(#require(calls.last).body.value, "input")
       #expect(try RouterJSON.string(restored).contains("RECOVERED_TOOL_RESULT"))
       if at == .text {
-        #expect(try RouterJSON.string(calls[1].body.value).contains("INTERRUPTED_ASSISTANT_NOTE"))
+        #expect(try RouterJSON.string(calls[1].body.value).contains("PARTIAL_ASSISTANT_NOTE"))
       }
     }
 
@@ -132,7 +132,7 @@ enum OfficialEngineRecoveryFixture {
             "type": "invalid_request_error", "code": code, "message": "PRIVATE_SERVER_TEXT",
           ],
         ],
-        after: 0, count: 1, afterCreated: afterCreated, onRejection: {})
+        after: 0, count: 1, at: afterCreated ? .created : .empty, onRejection: {})
       let rejected = try run(rpc, thread: thread)
       #expect(rejected["status"] as? String == "failed")
       #expect(try RouterJSON.string(rejected).contains(code))

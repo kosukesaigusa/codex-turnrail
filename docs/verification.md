@@ -22,11 +22,15 @@ The package's launcher is a script protected by the outer app's resource seal. T
 
 Swift and Python suites, formatting, documentation lint, and metadata checks pass locally. After updating the release reference, the installed older app still passes official authentication initialization without a version-match requirement. Installed applications and real account data were not changed. Desktop UI, real-service behavior, hosted CI, and signed distribution of this change remain separate checks; local review was performed by the implementing agent.
 
+## Expiry during an active response
+
+The October 7, 2026 fixture sends an explicit HTTP 400 `websocket_connection_limit_reached` error after response creation, partial assistant output, tool dispatch, and a completed tool result. The official Engine must recover on a new WebSocket using the same account, retain completed output and tool results, and execute a real marker command once. Repeated expiry of the same request remains terminal, and a subsequent user turn remains usable. This fixture uses synthetic accounts and a local model; real-service recurrence remains a separate observation.
+
 ## WebSocket connection-limit recovery
 
 The September 26, 2026 regression reproduces `websocket_connection_limit_reached` with the signed official Engine from ChatGPT `26.917.71314 (10954)`, synthetic accounts, and a local model fixture. Before the correction, an explicit rejection after a completed tool call stopped the turn with `turnrail_routing_stopped`.
 
-The corrected fixture completes the same turn through a new connection, restores the completed tool output, and executes the marker command exactly once. Changing account priority during rejection does not change the bound account. Manual compaction also recovers. A second rejection on the replacement connection and a rejection after `response.created` remain terminal, and subsequent user turns still use WebSockets successfully. Ledger tests verify that confirmed rejection survives restart while an interrupted resubmission remains blocked. Existing 181-second waiting, cancellation, and official idle-timeout scenarios pass. This is isolated runtime evidence; real-service recurrence and the complete released desktop UI require separate observation.
+The corrected fixture completes the same turn through a new connection, restores the completed tool output, and executes the marker command exactly once. Changing account priority during rejection does not change the bound account. Manual compaction also recovers. A second rejection on the replacement connection remains terminal, and subsequent user turns still use WebSockets successfully. Ledger tests verify that confirmed rejection survives restart while an interrupted resubmission remains blocked. Existing 181-second waiting, cancellation, and official idle-timeout scenarios pass. This is isolated runtime evidence; real-service recurrence and the complete released desktop UI require separate observation.
 
 ## Official Engine integration status
 

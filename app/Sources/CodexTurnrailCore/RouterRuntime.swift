@@ -307,12 +307,10 @@ final class RouterRuntime: @unchecked Sendable {
           progress?.received(type: type)
           if ["error", "response.failed", "response.incomplete"].contains(type) {
             let failure = try RouterServiceFailure(event: event)
-            if downstream.transport == .webSocket, failure.isWebSocketConnectionLimit,
-              progress?.snapshot().receivedEvents == 1
-            {
-              // The service explicitly rejected this request before any response.
-              // Let the Engine retry it once; closing both sockets forces a new
-              // generation with full known history and the same account binding.
+            if downstream.transport == .webSocket, failure.isWebSocketConnectionLimit {
+              // The service expired this connection, including during a response.
+              // Let the Engine recover once with its completed output and tool results.
+              // Closing both sockets restores full history on the same account.
               try ledger.rejectConnectionLimit(fingerprint, turn: key)
               try downstream.frame(RouterJSON.data(RouterServiceFailure.connectionLimitRetryEvent))
               currentTurn = nil

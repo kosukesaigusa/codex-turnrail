@@ -477,7 +477,8 @@ struct RouterOfficialEngineTests {
           "transport_recovery", "compaction", "failure_recovery", "web_search",
           "connection_recovery",
           "model_wait", "model_wait_cancellation", "engine_idle_timeout",
-          "connection_limit_recovery", "http_recovery", "tool_result_recovery",
+          "connection_limit_recovery", "connection_limit_mid_response_recovery",
+          "http_recovery", "tool_result_recovery",
           "receive_cancellation_recovery", "server_error_recovery",
         ]), to: URL(filePath: proof))
     }
@@ -562,15 +563,15 @@ final class FixtureModel: @unchecked Sendable {
   private var received: [Request] = []
   private var tools = Set<String>()
   private var toolSource = "text(6 * 7);"
-  enum Interruption { case empty, created, text, tool }
-  private var interruption = Interruption.empty
+  enum ResponsePoint: Sendable { case empty, created, text, tool }
+  private var interruption = ResponsePoint.empty
   private var interruptionDelay = 0
   private var interruptionCount = 0
   private var onInterruption: (@Sendable () -> Void)?
   private var rejection: RouterObject?
   private var rejectionDelay = 0
   private var rejectionCount = 0
-  private var rejectionAfterCreated = false
+  private var rejectionPoint = ResponsePoint.empty
   private var onRejection: (@Sendable () -> Void)?
   private var epoch = 0
   private var opened: [UUID] = []
@@ -594,7 +595,7 @@ final class FixtureModel: @unchecked Sendable {
     interrupt(after: 0, count: 1, at: afterCreated ? .created : .empty, onInterruption: {})
   }
   func interrupt(
-    after: Int, count: Int, at interruption: Interruption,
+    after: Int, count: Int, at interruption: ResponsePoint,
     onInterruption: @escaping @Sendable () -> Void
   ) {
     lock.withLock {
@@ -605,18 +606,18 @@ final class FixtureModel: @unchecked Sendable {
     }
   }
   func rejectNext(_ event: [String: Any]) {
-    reject(event, after: 0, count: 1, afterCreated: false, onRejection: {})
+    reject(event, after: 0, count: 1, at: .empty, onRejection: {})
   }
 
   func reject(
-    _ event: [String: Any], after: Int, count: Int, afterCreated: Bool,
+    _ event: [String: Any], after: Int, count: Int, at point: ResponsePoint,
     onRejection: @escaping @Sendable () -> Void
   ) {
     lock.withLock {
       rejection = RouterObject(event)
       rejectionDelay = after
       rejectionCount = count
-      rejectionAfterCreated = afterCreated
+      rejectionPoint = point
       self.onRejection = onRejection
     }
   }
@@ -636,12 +637,7 @@ final class FixtureModel: @unchecked Sendable {
         rejectionCount -= 1
         if rejectionCount == 0 { self.rejection = nil }
         onRejection?()
-        var events: [[String: Any]] = []
-        if rejectionAfterCreated {
-          events.append([
-            "type": "response.created", "response": ["id": "fixture-rejected-response"],
-          ])
-        }
+        var events = responsePrefix(at: rejectionPoint, turn: turn)
         events.append(rejection.value)
         return try events.map(RouterJSON.data)
       }
@@ -649,29 +645,7 @@ final class FixtureModel: @unchecked Sendable {
       if interruptionDelay == 0, interruptionCount > 0 {
         interruptionCount -= 1
         onInterruption?()
-        if interruption == .empty { return [] }
-        var events: [[String: Any]] = [
-          ["type": "response.created", "response": ["id": "fixture-interrupted-\(received.count)"]]
-        ]
-        if interruption == .text {
-          let item: [String: Any] = [
-            "id": "partial-\(received.count)", "type": "message", "role": "assistant",
-            "content": [["type": "output_text", "text": "INTERRUPTED_ASSISTANT_NOTE"]],
-          ]
-          events += [
-            ["type": "response.output_text.delta", "delta": "INTERRUPTED_ASSISTANT_NOTE"],
-            ["type": "response.output_item.done", "item": item],
-          ]
-        } else if interruption == .tool {
-          tools.insert(turn)
-          events.append([
-            "type": "response.output_item.done",
-            "item": [
-              "id": "tool-" + turn, "type": "custom_tool_call", "name": "exec",
-              "call_id": "call-" + turn, "input": toolSource,
-            ],
-          ])
-        }
+        let events = responsePrefix(at: interruption, turn: turn)
         return try events.map(RouterJSON.data)
       }
       if interruptionDelay > 0 { interruptionDelay -= 1 }
@@ -708,6 +682,33 @@ final class FixtureModel: @unchecked Sendable {
         ],
       ].map(RouterJSON.data)
     }
+  }
+
+  private func responsePrefix(at point: ResponsePoint, turn: String) -> [[String: Any]] {
+    if point == .empty { return [] }
+    var events: [[String: Any]] = [
+      ["type": "response.created", "response": ["id": "fixture-partial-\(received.count)"]]
+    ]
+    if point == .text {
+      let item: [String: Any] = [
+        "id": "partial-\(received.count)", "type": "message", "role": "assistant",
+        "content": [["type": "output_text", "text": "PARTIAL_ASSISTANT_NOTE"]],
+      ]
+      events += [
+        ["type": "response.output_text.delta", "delta": "PARTIAL_ASSISTANT_NOTE"],
+        ["type": "response.output_item.done", "item": item],
+      ]
+    } else if point == .tool {
+      tools.insert(turn)
+      events.append([
+        "type": "response.output_item.done",
+        "item": [
+          "id": "tool-" + turn, "type": "custom_tool_call", "name": "exec",
+          "call_id": "call-" + turn, "input": toolSource,
+        ],
+      ])
+    }
+    return events
   }
 }
 
