@@ -4,7 +4,7 @@ extension CodexCompatibilityContract {
   public static let reference = CodexCompatibilityContract(
     bundleIdentifier: "com.openai.codex",
     appVersion: "26.930.61225",
-    appBuild: "13232",
+    appBuild: "13520",
     cliVersion: "codex-cli 0.160.1"
   )
 }
