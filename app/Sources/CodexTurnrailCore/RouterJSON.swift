@@ -8,17 +8,22 @@ struct RouterFailure: LocalizedError {
   var errorDescription: String? { message }
 }
 
+/// Foundation temporaries are released independently of persistent connection lifetimes.
 enum RouterJSON {
   static func object(_ data: Data) throws -> [String: Any] {
-    guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-      throw RouterFailure("Expected a JSON object.")
+    try autoreleasepool {
+      guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw RouterFailure("Expected a JSON object.")
+      }
+      return result
     }
-    return result
   }
 
   static func data(_ value: Any) throws -> Data {
-    try JSONSerialization.data(
-      withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
+    try autoreleasepool {
+      try JSONSerialization.data(
+        withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
+    }
   }
 
   static func string(_ value: Any) throws -> String {
@@ -47,15 +52,19 @@ enum RouterJSON {
   }
 
   static func hash(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    autoreleasepool {
+      SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
   }
 
   static func quote(_ value: String) -> String {
     // A JSON string is also a TOML basic string for the paths and ASCII keys used here.
-    String(
-      decoding: try! JSONSerialization.data(
-        withJSONObject: value, options: [.fragmentsAllowed, .withoutEscapingSlashes]),
-      as: UTF8.self)
+    autoreleasepool {
+      String(
+        decoding: try! JSONSerialization.data(
+          withJSONObject: value, options: [.fragmentsAllowed, .withoutEscapingSlashes]),
+        as: UTF8.self)
+    }
   }
 
   static func shellQuote(_ value: String) -> String {

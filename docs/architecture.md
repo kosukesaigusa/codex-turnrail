@@ -38,6 +38,8 @@ The router listens only on `127.0.0.1`, with a random endpoint secret and privat
 
 Upstream requests use TLS to the verified ChatGPT backend and the selected account's access token and workspace ID. The router preserves the Engine's tool, model, and response protocol. Shell execution, approval, Code Mode, and browser-tool execution remain in the official runtime.
 
+JSON parsing, serialization, content-identity formatting, and configuration quoting use local autorelease pools. Foundation's temporary objects are released when each conversion returns, including on failure, independently of a persistent WebSocket or Engine stdio worker's lifetime. Returned JSON values and outgoing buffers retain normal ownership; conversation history retains its persistence and size limits.
+
 Native `web.run` uses HTTP `POST /alpha/search` under the configured provider. The router requires the thread and turn from its metadata to have an existing model-request binding, including for child agents whose search metadata omits the parent turn. The selected account supplies authentication; only the protocol's originator, version, and turn metadata headers are forwarded. Request and response sizes are bounded, redirects are rejected, and a submitted search is not replayed or moved to another account.
 
 The private ledger stores turn bindings and completed response history. Message bodies are content-addressed; response records retain input deltas and the previous response relationship. When the account or upstream connection changes, the router reconstructs known conversation input and removes `previous_response_id`. It never assumes an unknown response ID belongs to the selected account. Corrupt or cross-task history is an error.
