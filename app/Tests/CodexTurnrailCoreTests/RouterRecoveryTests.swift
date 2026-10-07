@@ -29,16 +29,39 @@ struct RouterRecoveryTests {
     for close in [
       URLSessionWebSocketTask.CloseCode.protocolError, .policyViolation, .messageTooBig,
     ] {
-      #expect(
-        !RouterTransportFailure(
-          phase: .receive, error: URLError(.networkConnectionLost),
-          closeCode: close
-        ).permitsEngineRecovery)
+      for error in [
+        URLError(.networkConnectionLost) as NSError,
+        NSError(domain: NSPOSIXErrorDomain, code: Int(ECANCELED)),
+      ] {
+        #expect(
+          !RouterTransportFailure(
+            phase: .receive, error: error, closeCode: close
+          ).permitsEngineRecovery)
+      }
     }
     var local = RouterTransportFailure(
       phase: .receive, error: URLError(.timedOut), closeCode: .invalid)
     local.cause = .localClose
     #expect(!local.permitsEngineRecovery)
+  }
+
+  @Test
+  func onlyTransportReceiveCancellationPermitsEngineRecovery() {
+    var failure = RouterTransportFailure(
+      phase: .receive, error: NSError(domain: NSPOSIXErrorDomain, code: Int(ECANCELED)),
+      closeCode: .invalid)
+    #expect(failure.permitsEngineRecovery)
+    for phase in [RouterTransportFailure.Phase.check, .send] {
+      failure.phase = phase
+      #expect(!failure.permitsEngineRecovery)
+    }
+    failure.phase = .receive
+    for cause in [
+      RouterTransportFailure.Cause.localClose, .probe, .keepAlive, .sendTimeout, .receiveTimeout,
+    ] {
+      failure.cause = cause
+      #expect(!failure.permitsEngineRecovery)
+    }
   }
 
   @Test
