@@ -229,6 +229,7 @@ struct RouterHTTPRequest: Sendable {
 final class RouterListener: @unchecked Sendable {
   let port: UInt16
   private let descriptor: Int32
+  private let readSource: DispatchSourceRead
   private let lock = NSLock()
   private var stopped = false
   private var sockets: [UUID: RouterSocket] = [:]
@@ -261,34 +262,65 @@ final class RouterListener: @unchecked Sendable {
       throw RouterFailure("Could not read the loopback port.")
     }
     port = UInt16(bigEndian: address.sin_port)
+    // Readiness callbacks must never block cancellation in accept().
+    let flags = fcntl(descriptor, F_GETFL)
+    guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+      Darwin.close(descriptor)
+      throw RouterFailure("Could not configure the private loopback listener.")
+    }
+    readSource = DispatchSource.makeReadSource(
+      fileDescriptor: descriptor, queue: DispatchQueue(label: "Turnrail.listener"))
+    readSource.setEventHandler {}
+    readSource.setCancelHandler { Darwin.close(descriptor) }
   }
 
-  deinit { Darwin.close(descriptor) }
+  deinit { cancelReadSource() }
 
   func start(_ handle: @escaping @Sendable (RouterSocket) -> Void) {
-    DispatchQueue(label: "Turnrail.listener").async {
-      while !self.lock.withLock({ self.stopped }) {
-        let fd = accept(self.descriptor, nil, nil)
-        if fd < 0 {
-          if errno == EINTR { continue }
-          break
-        }
-        let connection = RouterSocket(fd)
-        let id = UUID()
-        let accepted = self.lock.withLock {
-          guard !self.stopped, self.sockets.count < 64 else { return false }
-          self.sockets[id] = connection
-          return true
-        }
-        if !accepted {
-          connection.close()
-          continue
-        }
-        DispatchQueue(label: "Turnrail.connection.\(id)").async {
-          handle(connection)
-          connection.close()
-          _ = self.lock.withLock { self.sockets.removeValue(forKey: id) }
-        }
+    lock.withLock {
+      guard !stopped else { return }
+      readSource.setEventHandler { [weak self] in self?.acceptConnections(handle) }
+      readSource.activate()
+    }
+  }
+
+  private func cancelReadSource() {
+    readSource.setEventHandler {}
+    readSource.cancel()
+    // Cancellation cleanup also runs for listeners released before start().
+    readSource.activate()
+  }
+
+  private func acceptConnections(_ handle: @escaping @Sendable (RouterSocket) -> Void) {
+    while !lock.withLock({ stopped }) {
+      let fd = accept(descriptor, nil, nil)
+      if fd < 0 {
+        if errno == EINTR { continue }
+        if errno != EAGAIN && errno != EWOULDBLOCK { stop() }
+        return
+      }
+      // Accepted connections retain the blocking framing contract.
+      let flags = fcntl(fd, F_GETFL)
+      guard flags >= 0, fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0 else {
+        Darwin.close(fd)
+        stop()
+        return
+      }
+      let connection = RouterSocket(fd)
+      let id = UUID()
+      let accepted = lock.withLock {
+        guard !stopped, sockets.count < 64 else { return false }
+        sockets[id] = connection
+        return true
+      }
+      if !accepted {
+        connection.close()
+        continue
+      }
+      DispatchQueue(label: "Turnrail.connection.\(id)").async {
+        handle(connection)
+        connection.close()
+        _ = self.lock.withLock { self.sockets.removeValue(forKey: id) }
       }
     }
   }
@@ -297,9 +329,9 @@ final class RouterListener: @unchecked Sendable {
     let current = lock.withLock { () -> [RouterSocket] in
       guard !stopped else { return [] }
       stopped = true
-      shutdown(descriptor, SHUT_RDWR)
       return Array(sockets.values)
     }
+    cancelReadSource()
     for socket in current { socket.close() }
   }
 }
