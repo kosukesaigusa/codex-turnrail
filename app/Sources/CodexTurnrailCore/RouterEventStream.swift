@@ -15,6 +15,8 @@ final class RouterEventStream: NSObject, RouterUpstream, URLSessionDataDelegate,
   private var parser = RouterSSEParser()
   private var terminal: Error?
   private var status: Int?
+  private var mediaType: String?
+  private var receivedBytes = 0
   private var rejection = Data()
   private let createdAt = ProcessInfo.processInfo.systemUptime
 
@@ -122,12 +124,10 @@ final class RouterEventStream: NSObject, RouterUpstream, URLSessionDataDelegate,
       return
     }
     status = response.statusCode
-    if response.statusCode == 200, response.mimeType?.lowercased() != "text/event-stream" {
-      finish(RouterFailure("The model service did not return an event stream."))
-      completionHandler(.cancel)
-    } else {
-      completionHandler(.allow)
-    }
+    mediaType = response.mimeType?.lowercased()
+    // The official Engine parses SSE bytes without a media-type gate. Validate
+    // that same protocol here; a header alone cannot establish the response format.
+    completionHandler(.allow)
   }
 
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -146,6 +146,7 @@ final class RouterEventStream: NSObject, RouterUpstream, URLSessionDataDelegate,
         throw RouterFailure("The model event stream exceeded the supported buffer size.")
       }
       let received = try parser.append(data)
+      receivedBytes += data.count
       events += received
       queuedBytes += received.reduce(0) { $0 + $1.count }
       condition.signal()
@@ -166,6 +167,24 @@ final class RouterEventStream: NSObject, RouterUpstream, URLSessionDataDelegate,
       } catch {
         finish(RouterFailure("The model service rejected HTTP inference (HTTP \(status))."))
       }
+    } else if let status, status == 200, error == nil, receivedBytes > 0, !parser.hasSSEFields {
+      // A completed non-SSE body is a protocol failure, not a transport retry.
+      // Never expose its body or an arbitrary server-provided header value.
+      let type: String
+      if let mediaType {
+        type =
+          [
+            "text/event-stream", "text/plain", "text/html", "application/json",
+            "application/octet-stream",
+          ]
+          .contains(mediaType) ? mediaType : "unrecognized"
+      } else {
+        type = "missing"
+      }
+      finish(
+        RouterFailure(
+          "The model service did not return an event stream. [HTTP \(status); Content-Type: \(type)]"
+        ))
     } else {
       // Even clean EOF is incomplete without response.completed. The consumer will
       // already have committed a completed response before reading this sentinel.
@@ -180,7 +199,18 @@ struct RouterSSEParser {
   private var pending = Data()
   private var payload = Data()
   private var afterCR = false
+  private var sawSSEField = false
   var bufferedBytes: Int { pending.count + payload.count }
+  var hasSSEFields: Bool {
+    if sawSSEField { return true }
+    guard !pending.isEmpty else { return false }
+    if pending.first == 58 { return true }
+    // A connection can close in the middle of a field name or data line.
+    return ["data:", "event:", "id:", "retry:"].contains { field in
+      let bytes = Data(field.utf8)
+      return bytes.starts(with: pending) || pending.starts(with: bytes)
+    }
+  }
 
   mutating func append(_ chunk: Data) throws -> [Data] {
     guard bufferedBytes + chunk.count <= Self.maximumBytes else {
@@ -204,10 +234,16 @@ struct RouterSSEParser {
             payload = Data()
           }
         } else if pending.starts(with: Data("data:".utf8)) {
+          sawSSEField = true
           var value = pending.dropFirst(5)
           if value.first == 32 { value = value.dropFirst() }
           payload.append(contentsOf: value)
           payload.append(10)
+        } else if pending.first == 58
+          || ["data", "event", "id", "retry"].contains(
+            String(decoding: pending.prefix { $0 != 58 }, as: UTF8.self))
+        {
+          sawSSEField = true
         }
         pending = Data()
       } else {

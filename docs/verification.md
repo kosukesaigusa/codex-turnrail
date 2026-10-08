@@ -22,6 +22,12 @@ The package's launcher is a script protected by the outer app's resource seal. T
 
 Swift and Python suites, formatting, documentation lint, and metadata checks pass locally. After updating the release reference, the installed older app still passes official authentication initialization without a version-match requirement. Installed applications and real account data were not changed. Desktop UI, real-service behavior, hosted CI, and signed distribution of this change remain separate checks; local review was performed by the implementing agent.
 
+## HTTP response content validation
+
+The October 8, 2026 fixture compares the signed official Engine directly with the same Engine behind Turnrail using identical SSE bodies declared as `text/event-stream`, `text/plain`, `application/json`, or without a media type. The direct Engine completes all four cases. Before the correction, Turnrail stops the three noncanonical declarations with `The model service did not return an event stream.` The corrected router completes them, restores tool results, retains the account binding and authentication file, and executes each marker once. Real HTTP unit tests also require non-SSE JSON and HTML bodies to stop with sanitized format diagnostics while empty or interrupted SSE responses remain eligible for existing transport recovery.
+
+The reported live failures occurred on Turnrail 0.24.3, but their upstream media type and response bodies were not retained. These tests demonstrate and correct a reproducible difference from the official Engine; they do not establish that the rejected live responses contained valid SSE. Real-service recurrence remains a separate observation.
+
 ## Expiry during an active response
 
 The October 7, 2026 fixture sends an explicit HTTP 400 `websocket_connection_limit_reached` error after response creation, partial assistant output, tool dispatch, and a completed tool result. The official Engine must recover on a new WebSocket using the same account, retain completed output and tool results, and execute a real marker command once. Repeated expiry of the same request remains terminal, and a subsequent user turn remains usable. This fixture uses synthetic accounts and a local model; real-service recurrence remains a separate observation.

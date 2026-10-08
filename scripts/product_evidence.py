@@ -16,6 +16,7 @@ SCENARIOS = {
     "receive_cancellation_recovery",
     "server_error_recovery",
     "http_recovery",
+    "http_content_validation",
     "tool_result_recovery",
     "connection_recovery",
     "connection_limit_recovery",
