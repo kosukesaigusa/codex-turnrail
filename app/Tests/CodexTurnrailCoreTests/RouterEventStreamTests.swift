@@ -79,6 +79,77 @@ struct RouterEventStreamTests {
     #expect(server.requestCount == 1)
   }
 
+  @Test(.timeLimit(.minutes(1)), arguments: HTTPModelMediaType.allCases)
+  func validSSEIsParsedFromItsBodyWithoutRequiringAMediaType(type: HTTPModelMediaType) throws {
+    let server = try EventStreamServer { socket, _ in
+      try socket.write(
+        Data(("HTTP/1.1 200 OK\r\n" + type.header + "Connection: close\r\n\r\n").utf8)
+          + Data(
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture\"}}\n\n".utf8))
+    }
+    defer { server.stop() }
+    let client = server.connect()
+    defer { client.close() }
+    try client.send(Self.body())
+    #expect(try RouterJSON.object(client.receive())["type"] as? String == "response.completed")
+    #expect(server.requestCount == 1)
+  }
+
+  @Test(
+    .timeLimit(.minutes(1)),
+    arguments: ["application/json", "text/html", "PRIVATE_HEADER_VALUE", nil] as [String?])
+  func nonSSEBodiesFailWithSafeHTTPDiagnosticsWithoutResubmitting(type: String?) throws {
+    let header: String
+    if let type {
+      header = "Content-Type: \(type)\r\n"
+    } else {
+      header = ""
+    }
+    let server = try EventStreamServer { socket, _ in
+      let body =
+        type == "text/html"
+        ? "<html>PRIVATE_BODY_AND_TOKEN</html>"
+        : "{\"error\":\"PRIVATE_BODY_AND_TOKEN\"}"
+      try socket.write(
+        Data(("HTTP/1.1 200 OK\r\n" + header + "Connection: close\r\n\r\n" + body).utf8))
+    }
+    defer { server.stop() }
+    let client = server.connect()
+    defer { client.close() }
+    try client.send(Self.body())
+    do {
+      _ = try client.receive()
+      Issue.record("A non-SSE body unexpectedly succeeded.")
+    } catch let failure as RouterFailure {
+      #expect(failure.localizedDescription.contains("HTTP 200; Content-Type:"))
+      #expect(!failure.localizedDescription.contains("PRIVATE_"))
+      if type == "application/json" || type == "text/html" {
+        let knownType = try #require(type)
+        #expect(failure.localizedDescription.contains(knownType))
+      }
+    }
+    #expect(server.requestCount == 1)
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: ["", ": keepalive\n\n", "da"])
+  func anEmptyOrInterruptedSSEBodyStillAllowsEngineTransportRecovery(body: String) throws {
+    let server = try EventStreamServer { socket, _ in
+      try socket.write(
+        Data(("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + body).utf8))
+    }
+    defer { server.stop() }
+    let client = server.connect()
+    defer { client.close() }
+    try client.send(Self.body())
+    do {
+      _ = try client.receive()
+      Issue.record("An incomplete SSE response unexpectedly succeeded.")
+    } catch let failure as RouterTransportFailure {
+      #expect(failure.permitsEngineRecovery)
+    }
+    #expect(server.requestCount == 1)
+  }
+
   @Test(.timeLimit(.minutes(1)))
   func httpRejectionsStayTerminalAndDoNotExposeServerText() throws {
     let server = try EventStreamServer { socket, _ in
