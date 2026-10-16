@@ -5,8 +5,10 @@ import Testing
 @testable import CodexTurnrailCore
 
 struct AccountLoginExecutorTests {
-  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-  func cancellationStopsTheOwnedProcessEvenWhenItIgnoresTermination(ignoreTermination: Bool)
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true], [0, 6])
+  func cancellationStopsTheOwnedProcessEvenWhenItIgnoresTermination(
+    ignoreTermination: Bool, startupDelay: Int
+  )
     async throws
   {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
@@ -15,26 +17,44 @@ struct AccountLoginExecutorTests {
     let pidFile = root.appending(path: "login.pid")
     let script =
       (ignoreTermination ? "trap '' TERM; " : "")
+      + "/bin/sleep \(startupDelay); "
       + "echo $$ > \"$1.pending\" && /bin/mv \"$1.pending\" \"$1\" && exec /bin/sleep 60"
+    let (readiness, ready) = AsyncThrowingStream<Void, any Error>.makeStream()
     let task = Task {
-      try await AccountLoginExecutor.live.execute(
-        AccountAuthenticationCommand(
-          executableURL: URL(filePath: "/bin/sh"),
-          arguments: ["-c", script, "turnrail-login-test", pidFile.path],
-          environment: [:], expectedEmail: nil
-        ))
-    }
-    defer { task.cancel() }
-    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-    while !FileManager.default.fileExists(atPath: pidFile.path) {
-      guard ContinuousClock.now < deadline else {
-        Issue.record("The test login process did not start")
-        task.cancel()
-        _ = await task.result
-        return
+      do {
+        let result = try await AccountLoginExecutor.live.execute(
+          AccountAuthenticationCommand(
+            executableURL: URL(filePath: "/bin/sh"),
+            arguments: ["-c", script, "turnrail-login-test", pidFile.path],
+            environment: [:], expectedEmail: nil
+          ))
+        ready.finish(
+          throwing: RouterFailure("The fixture login exited before readiness: \(result.exitCode)."))
+        return result
+      } catch {
+        ready.finish(throwing: error)
+        throw error
       }
-      try await Task.sleep(for: .milliseconds(10))
     }
+    let observer = Task {
+      do {
+        while !FileManager.default.fileExists(atPath: pidFile.path) {
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        ready.yield(())
+        ready.finish()
+      } catch {
+        ready.finish(throwing: error)
+      }
+    }
+    defer {
+      observer.cancel()
+      task.cancel()
+      ready.finish()
+    }
+    // The test time limit bounds startup without treating scheduler delay as cancellation failure.
+    var iterator = readiness.makeAsyncIterator()
+    try #require(try await iterator.next() != nil)
     let pid = try #require(
       Int32(
         String(contentsOf: pidFile, encoding: .utf8)
@@ -44,8 +64,10 @@ struct AccountLoginExecutorTests {
       _ = try await task.value
       Issue.record("Cancellation must throw after terminating the process")
     } catch is CancellationError {
-      #expect(kill(pid, 0) == -1)
-      #expect(errno == ESRCH)
+      let status = kill(pid, 0)
+      let failure = errno
+      #expect(status == -1)
+      #expect(failure == ESRCH)
     }
   }
 
