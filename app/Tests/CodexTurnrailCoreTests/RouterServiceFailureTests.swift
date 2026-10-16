@@ -4,11 +4,13 @@ import Testing
 @testable import CodexTurnrailCore
 
 struct RouterServiceFailureTests {
-  @Test
-  func recognizedServerErrorsRetainTheEngineRetryClassificationWithoutPrivateDetails() throws {
+  @Test(arguments: [500, 503])
+  func recognizedServerErrorsRetainTheEngineRetryClassificationWithoutPrivateDetails(status: Int)
+    throws
+  {
     for event: [String: Any] in [
       [
-        "type": "error", "status": 500,
+        "type": "error", "status": status,
         "error": [
           "type": "server_error", "code": "server_error", "message": "PRIVATE_SERVER_TEXT",
           "authorization": "PRIVATE_TOKEN", "account_id": "PRIVATE_ACCOUNT",
@@ -37,7 +39,20 @@ struct RouterServiceFailureTests {
   func otherServiceFailuresCannotCreateRetryEvents() throws {
     for event: [String: Any] in [
       ["type": "error", "status": 400, "error": ["type": "server_error", "code": "server_error"]],
-      ["type": "error", "status": 503, "error": ["type": "server_error", "code": "server_error"]],
+      ["type": "error", "status": 502, "error": ["type": "server_error", "code": "server_error"]],
+      ["type": "error", "status": 504, "error": ["type": "server_error", "code": "server_error"]],
+      [
+        "type": "error", "status": 503,
+        "error": ["type": "server_error", "code": "usage_limit_reached"],
+      ],
+      [
+        "type": "error", "status": 503,
+        "error": ["type": "permission_error", "code": "server_error"],
+      ],
+      [
+        "type": "error", "status": 503,
+        "error": ["type": "server_error", "code": "misalignment_policy_violation"],
+      ],
       ["type": "error", "error": ["type": "server_error", "code": "server_error"]],
       ["type": "error", "status": 500, "error": ["code": "server_error"]],
       [

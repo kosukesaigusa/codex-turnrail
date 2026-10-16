@@ -6,8 +6,10 @@ import Testing
 extension RouterOfficialEngineTests {
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
-    .timeLimit(.minutes(3)))
-  func serverErrorsRecoverOnTheBoundAccountWithoutRepeatingToolsOrExtendingRetries() throws {
+    .timeLimit(.minutes(3)), arguments: [500, 503])
+  func serverErrorsRecoverOnTheBoundAccountWithoutRepeatingToolsOrExtendingRetries(status: Int)
+    throws
+  {
     let installed = try OfficialEngineInstallation.verify(
       app: URL(
         filePath: #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"]))
@@ -18,13 +20,15 @@ extension RouterOfficialEngineTests {
       let root = try RouterTestDirectory()
       let provider = try FixtureAccounts(root: root.url)
       let backend = FixtureModel()
+      let httpModel = try ServerErrorHTTPModel(backend: backend)
+      defer { httpModel.stop() }
       let runtime = try RouterRuntime(
         root: root.url, accounts: provider,
         connect: { account, _ in
           FixtureUpstream(account: account.account.id, backend: backend)
         },
         connectHTTP: { account, _ in
-          FixtureUpstream(account: account.account.id, backend: backend, transport: "http")
+          httpModel.connect(account: account.account.id)
         })
       runtime.start()
       defer { runtime.stop() }
@@ -63,7 +67,7 @@ extension RouterOfficialEngineTests {
       ]
       backend.setTool("text(await tools.exec_command(" + (try RouterJSON.string(command)) + "));")
       let serverError: [String: Any] = [
-        "type": "error", "status": 500,
+        "type": "error", "status": status,
         "error": [
           "type": "server_error", "code": "server_error", "message": "PRIVATE_SERVER_TEXT",
           "authorization": "PRIVATE_TOKEN", "account_id": "PRIVATE_ACCOUNT",
@@ -97,10 +101,10 @@ extension RouterOfficialEngineTests {
         #expect(try !RouterJSON.string(done).contains("PRIVATE_"))
       }
 
-      // A policy refusal must remain terminal even when accompanied by HTTP 500.
+      // A policy refusal must remain terminal even when accompanied by a recoverable status.
       provider.choose(provider.first.account.id)
       backend.rejectNext([
-        "type": "error", "status": 500,
+        "type": "error", "status": status,
         "error": [
           "type": "server_error", "code": "misalignment_policy_violation",
           "message": "PRIVATE_SERVER_TEXT",
@@ -128,6 +132,7 @@ extension RouterOfficialEngineTests {
         #expect(calls.count == 2)
         #expect(
           calls.allSatisfy { $0.account == provider.first.account.id && $0.transport == "http" })
+        #expect(httpModel.httpStatuses.contains(status))
       }
       #expect(
         try String(contentsOf: marker, encoding: .utf8)
@@ -135,6 +140,56 @@ extension RouterOfficialEngineTests {
       #expect(try Data(contentsOf: authFile) == auth)
     }
   }
+}
+
+/// Emits real HTTP error statuses before starting SSE, using only synthetic account data.
+private final class ServerErrorHTTPModel: @unchecked Sendable {
+  private let listener: RouterListener
+  private let lock = NSLock()
+  private var statuses: [Int] = []
+  var httpStatuses: [Int] { lock.withLock { statuses } }
+
+  init(backend: FixtureModel) throws {
+    listener = try RouterListener()
+    listener.start { [weak self] socket in
+      guard let self else { return }
+      do {
+        let request = try socket.request()
+        let length = try #require(Int(RouterJSON.text(request.headers, "content-length")))
+        let account = try #require(
+          UUID(uuidString: RouterJSON.text(request.headers, "x-fixture-account")))
+        var body = try RouterJSON.object(socket.read(length))
+        #expect(request.method == "POST")
+        #expect(body["type"] == nil)
+        body["type"] = "response.create"
+        let events = try backend.response(
+          RouterJSON.data(body), account: account, transport: "http")
+        for event in events {
+          let value = try RouterJSON.object(event)
+          if value["type"] as? String == "error", let status = value["status"] as? Int {
+            lock.withLock { statuses.append(status) }
+            try socket.reply(status: status, body: ["error": RouterJSON.map(value, "error")])
+            return
+          }
+        }
+        try socket.write(
+          Data(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".utf8))
+        for event in events {
+          try socket.write(Data("data: ".utf8) + event + Data("\n\n".utf8))
+        }
+      } catch { Issue.record(error) }
+    }
+  }
+
+  func connect(account: UUID) -> RouterEventStream {
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(listener.port)/responses")!)
+    request.httpMethod = "POST"
+    request.setValue(account.uuidString, forHTTPHeaderField: "x-fixture-account")
+    return RouterEventStream(accountID: account, request: request)
+  }
+
+  func stop() { listener.stop() }
 }
 
 private func runServerErrorTurn(_ rpc: OfficialEngineRPC, root: URL) throws -> [String: Any] {
