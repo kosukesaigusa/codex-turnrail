@@ -36,14 +36,15 @@ struct RouterServiceFailure: LocalizedError, Sendable {
       type == "error" && event["status"] as? Int == 400
       && detail["type"] as? String == "invalid_request_error"
       && detail["code"] as? String == "websocket_connection_limit_reached"
+    let status = event["status"] as? Int
     permitsEngineRecovery =
       detail["code"] as? String == "server_error"
-      && ((type == "error" && event["status"] as? Int == 500
+      && ((type == "error" && (status == 500 || status == 503)
         && detail["type"] as? String == "server_error")
         || (type == "response.failed"
           && (detail["type"] == nil || detail["type"] as? String == "server_error")))
     var diagnostics = [type]
-    if let status = event["status"] as? Int, (400...599).contains(status) {
+    if let status, (400...599).contains(status) {
       diagnostics.append("HTTP \(status)")
     }
     var recognized = false

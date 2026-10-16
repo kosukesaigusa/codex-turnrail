@@ -15,6 +15,7 @@ SCENARIOS = {
     "transport_recovery",
     "receive_cancellation_recovery",
     "server_error_recovery",
+    "service_unavailable_recovery",
     "http_recovery",
     "http_content_validation",
     "tool_result_recovery",

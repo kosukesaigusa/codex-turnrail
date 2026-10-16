@@ -1,5 +1,13 @@
 # Verification
 
+## Service unavailable recovery
+
+The October 16, 2026 regression reproduces the reported `HTTP 503; type: server_error; code: server_error` stop with synthetic accounts and the signed official Engine from ChatGPT `26.1013.31256 (20586)`. Before the correction, the 503 fixture reports a failed turn; the router had classified this recognized service failure as terminal. The correction delegates it to the existing official Engine recovery path on the bound account, alongside HTTP 500. It does not change product retry counts or introduce account switching.
+
+The parameterized runtime fixture covers both statuses over WebSocket and actual Foundation HTTP error responses. Each rejection follows a completed marker command. Successful recovery must retain its tool result, preserve the account despite a priority change, and execute the marker once per turn. Persistent HTTP failures stop after the fixture's finite Engine retry budget. Policy refusals remain terminal after one request even when accompanied by HTTP 500 or 503. Unknown error classifications remain terminal, and arbitrary service text and account details are not forwarded.
+
+The required runtime report includes `service_unavailable_recovery`. These checks use isolated homes and synthetic credentials; real-service recurrence, overnight operation, and recovery from outages exceeding the official Engine's retry budget remain separate observations.
+
 ## Loopback listener cancellation
 
 The October 8, 2026 main CI failure occurred in `stoppingListenerReleasesItsAcceptWorker`, after the HTTP content-validation PR had passed its checks. A loopback-only macOS syscall probe returned `ENOTCONN` from listening-socket shutdown in all three samples and left each accept worker blocked. The strengthened regression first accepts a real connection, then stops the listener; [the negative-control CI run](https://github.com/kosukesaigusa/codex-turnrail/actions/runs/37740384760) fails the release assertion with `afterConnection: true` against the unchanged implementation. Immediate shutdown can finish before the worker enters accept and conceal the defect.
