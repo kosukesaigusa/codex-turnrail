@@ -55,6 +55,8 @@ struct RouterLifecycleTests {
         client.close()
       } catch ListenerClientFailure.refused {
         return
+      } catch ListenerClientFailure.reset {
+        // Cancellation can reset an in-flight handshake before later attempts are refused.
       }
       Thread.sleep(forTimeInterval: 0.01)
     }
@@ -114,6 +116,7 @@ struct RouterLifecycleTests {
 
 private enum ListenerClientFailure: Error {
   case refused
+  case reset
 }
 
 private func listenerClient(port: UInt16) throws -> RouterSocket {
@@ -125,14 +128,16 @@ private func listenerClient(port: UInt16) throws -> RouterSocket {
   address.sin_family = sa_family_t(AF_INET)
   address.sin_port = port.bigEndian
   address.sin_addr.s_addr = inet_addr("127.0.0.1")
-  let status = withUnsafePointer(to: &address) { pointer in
+  let (status, failure) = withUnsafePointer(to: &address) { pointer in
     pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-      Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      let status = Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      return (status, errno)
     }
   }
   guard status == 0 else {
-    if errno == ECONNREFUSED { throw ListenerClientFailure.refused }
-    throw RouterFailure("Could not connect to the fixture listener.")
+    if failure == ECONNREFUSED { throw ListenerClientFailure.refused }
+    if failure == ECONNRESET { throw ListenerClientFailure.reset }
+    throw RouterFailure("Could not connect to the fixture listener: errno \(failure).")
   }
   return client
 }
