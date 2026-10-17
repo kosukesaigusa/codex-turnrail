@@ -121,7 +121,7 @@ final class RouterLedger: @unchecked Sendable {
       guard let text = try RouterJSON.map(state, "completed")[thread] as? String,
         let id = UUID(uuidString: text)
       else {
-        throw RouterFailure("Compaction requires a completed turn binding.")
+        throw RouterFailure("An automatic request requires a completed turn binding.")
       }
       return id
     }
