@@ -32,7 +32,7 @@ Quota inspection is optional and has one 2-second waiting budget shared across t
 
 The selected account is bound durably to the task and turn before inference. Changing priority affects the next user turn. Active turns never change accounts automatically. Child-agent and guardian requests must identify a known parent turn and inherit its binding. Compaction uses the current binding, or the task's last completed binding for an explicit idle compaction.
 
-Goal automatic continuations and resumptions bypass `UserPromptSubmit`. An explicit `goal` trigger with request kind `turn` inherits the same thread's last completed account binding before inference. That new turn binding is durable and immutable, including across retries and router restarts. A thread without a completed binding is rejected; an active turn or another thread's binding cannot authorize it. Goal routing does not replace title registration, child-agent parent validation, or ordinary prompt hooks. A subsequent user turn selects an account using the current folder priority.
+Goal automatic continuations and resumptions bypass `UserPromptSubmit`. An explicit `goal` trigger with request kind `turn` inherits the same thread's last completed account binding before inference. That new turn binding is durable and immutable, including across retries and router restarts. Compaction within an already bound Goal turn retains that binding. A thread without a completed binding is rejected; an active turn or another thread's binding cannot authorize it. Goal routing does not replace title registration, child-agent parent validation, or ordinary prompt hooks. A subsequent user turn selects an account using the current folder priority.
 
 ## Model traffic and conversation recovery
 

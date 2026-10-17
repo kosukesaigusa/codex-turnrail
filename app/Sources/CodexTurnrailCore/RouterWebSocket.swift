@@ -313,15 +313,13 @@ enum RouterRequest {
           throw RouterFailure("A child request requires its parent turn binding.")
         }
         try ledger.bind(key, account: account)
-      } else if trigger == "goal" {
+      } else if trigger == "goal", try ledger.bound(key) == nil {
         guard metadata["request_kind"] as? String == "turn" else {
           throw RouterFailure("Goal continuation requires a turn request.")
         }
         // Host-admitted Goal continuations bypass UserPromptSubmit. They inherit
         // only this thread's completed binding, never a newly selected account.
-        if try ledger.bound(key) == nil {
-          try ledger.bind(key, account: ledger.completedAccount(thread))
-        }
+        try ledger.bind(key, account: ledger.completedAccount(thread))
       }
     }
     guard let account = try ledger.bound(key) else {

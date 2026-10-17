@@ -186,6 +186,26 @@ struct RouterRoutingTests {
   }
 
   @Test
+  func compactionInsideAGoalTurnKeepsItsHookBinding() throws {
+    let root = try RouterTestDirectory()
+    let runtime = try RouterRuntime(
+      root: root.url, accounts: UnselectableAccounts(root: root.url),
+      connect: { _, _ in fatalError("This binding-only test cannot contact a model.") })
+    defer { runtime.stop() }
+    let account = UUID()
+    try runtime.ledger.bind("conversation/finished", account: account)
+    try runtime.ledger.stop("conversation", turn: "finished")
+    _ = try runtime.hook([
+      "hook_event_name": "PreCompact", "session_id": "conversation", "turn_id": "goal",
+    ])
+    let metadata: [String: Any] = [
+      "thread_id": "conversation", "turn_id": "goal", "turn_trigger": "goal",
+      "request_kind": "compaction",
+    ]
+    #expect(try RouterRequest.binding(metadata, ledger: runtime.ledger).1 == account)
+  }
+
+  @Test
   func automaticBindingDoesNotBypassOtherRoutingRequirements() throws {
     let root = try RouterTestDirectory()
     let ledger = try RouterLedger(root: root.url)
