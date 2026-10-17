@@ -139,6 +139,102 @@ struct RouterRoutingTests {
   }
 
   @Test
+  func goalContinuationInheritsItsCompletedThreadBindingAcrossRestart() throws {
+    let root = try RouterTestDirectory()
+    let account = UUID()
+    let other = UUID()
+    do {
+      let ledger = try RouterLedger(root: root.url)
+      try ledger.bind("conversation/finished", account: account)
+      try ledger.stop("conversation", turn: "finished")
+      try ledger.bind("conversation/uncompleted", account: other)
+      try ledger.bind("other/finished", account: other)
+      try ledger.stop("other", turn: "finished")
+    }
+    let ledger = try RouterLedger(root: root.url)
+    let metadata: [String: Any] = [
+      "thread_id": "conversation", "turn_id": "goal", "turn_trigger": "goal",
+      "request_kind": "turn",
+    ]
+    #expect(try RouterRequest.binding(metadata, ledger: ledger).1 == account)
+    #expect(try ledger.bound("conversation/goal") == account)
+    // A bound continuation stays immutable even if another turn later completes.
+    try ledger.stop("conversation", turn: "uncompleted")
+    #expect(try RouterRequest.binding(metadata, ledger: ledger).1 == account)
+    try ledger.stop("conversation", turn: "goal")
+    var next = metadata
+    next["turn_id"] = "next-goal"
+    #expect(try RouterRequest.binding(next, ledger: ledger).1 == account)
+    try ledger.fail("conversation/next-goal")
+    #expect(throws: (any Error).self) { try RouterRequest.binding(next, ledger: ledger) }
+  }
+
+  @Test
+  func goalContinuationRequiresACompletedBindingInTheSameThread() throws {
+    let root = try RouterTestDirectory()
+    let ledger = try RouterLedger(root: root.url)
+    let account = UUID()
+    try ledger.bind("other/finished", account: account)
+    try ledger.stop("other", turn: "finished")
+    try ledger.bind("conversation/active", account: account)
+    let metadata: [String: Any] = [
+      "thread_id": "conversation", "turn_id": "goal", "turn_trigger": "goal",
+      "request_kind": "turn",
+    ]
+    #expect(throws: (any Error).self) { try RouterRequest.binding(metadata, ledger: ledger) }
+    #expect(try ledger.bound("conversation/goal") == nil)
+  }
+
+  @Test
+  func compactionInsideAGoalTurnKeepsItsHookBinding() throws {
+    let root = try RouterTestDirectory()
+    let runtime = try RouterRuntime(
+      root: root.url, accounts: UnselectableAccounts(root: root.url),
+      connect: { _, _ in fatalError("This binding-only test cannot contact a model.") })
+    defer { runtime.stop() }
+    let account = UUID()
+    try runtime.ledger.bind("conversation/finished", account: account)
+    try runtime.ledger.stop("conversation", turn: "finished")
+    _ = try runtime.hook([
+      "hook_event_name": "PreCompact", "session_id": "conversation", "turn_id": "goal",
+    ])
+    let metadata: [String: Any] = [
+      "thread_id": "conversation", "turn_id": "goal", "turn_trigger": "goal",
+      "request_kind": "compaction",
+    ]
+    #expect(try RouterRequest.binding(metadata, ledger: runtime.ledger).1 == account)
+  }
+
+  @Test
+  func automaticBindingDoesNotBypassOtherRoutingRequirements() throws {
+    let root = try RouterTestDirectory()
+    let ledger = try RouterLedger(root: root.url)
+    let account = UUID()
+    try ledger.bind("conversation/finished", account: account)
+    try ledger.stop("conversation", turn: "finished")
+    let metadata: [String: Any] = [
+      "thread_id": "conversation", "turn_id": "unbound", "turn_trigger": "goal",
+      "request_kind": "turn",
+    ]
+    for kind in ["prewarm", "compaction"] {
+      var invalid = metadata
+      invalid["request_kind"] = kind
+      #expect(throws: (any Error).self) { try RouterRequest.binding(invalid, ledger: ledger) }
+    }
+    for trigger in ["composer", "memory_consolidation", "retry"] {
+      var invalid = metadata
+      invalid["turn_trigger"] = trigger
+      #expect(throws: (any Error).self) { try RouterRequest.binding(invalid, ledger: ledger) }
+    }
+    for source in ["thread_title", "subagent", "guardian_review"] {
+      var invalid = metadata
+      invalid["thread_source"] = source
+      #expect(throws: (any Error).self) { try RouterRequest.binding(invalid, ledger: ledger) }
+    }
+    #expect(try ledger.bound("conversation/unbound") == nil)
+  }
+
+  @Test
   func childTurnInheritsExactParentTurnInsteadOfCurrentFolderPriority() throws {
     let root = try RouterTestDirectory()
     let ledger = try RouterLedger(root: root.url)

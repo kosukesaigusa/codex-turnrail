@@ -23,6 +23,8 @@ SCENARIOS = {
     "connection_limit_recovery",
     "connection_limit_mid_response_recovery",
     "compaction",
+    "goal_continuation",
+    "goal_resume",
     "failure_recovery",
     "web_search",
     "model_wait",

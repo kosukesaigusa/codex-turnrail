@@ -138,6 +138,7 @@ struct RouterOfficialEngineTests {
       "cli_auth_credentials_store=\"file\"", "model=\"gpt-5.6-luna\"",
       "model_reasoning_effort=\"low\"",
       "features.apps=false", "features.plugins=false", "features.memories=false",
+      "features.goals=true",
       "analytics.enabled=false",
       "features.code_mode=true", "features.code_mode_host=true", "features.code_mode_only=true",
       "features.shell_tool=true", "approval_policy=\"never\"", "sandbox_mode=\"read-only\"",
@@ -298,6 +299,9 @@ struct RouterOfficialEngineTests {
         .count == 6)
     #expect(failures.messages.count == 1)
     #expect(failures.messages.first?.hasPrefix("Reconnecting before sending [") == true)
+    try OfficialEngineGoalFixture.verify(
+      rpc: rpc, backend: backend, provider: provider, root: root.url,
+      userHookMarker: userHookMarker)
     backend.failNextRequest(afterCreated: false)
     let failedStart = try rpc.request(
       "turn/start",
@@ -480,6 +484,7 @@ struct RouterOfficialEngineTests {
           "connection_limit_recovery", "connection_limit_mid_response_recovery",
           "http_recovery", "http_content_validation", "tool_result_recovery",
           "receive_cancellation_recovery", "server_error_recovery", "service_unavailable_recovery",
+          "goal_continuation", "goal_resume",
         ]), to: URL(filePath: proof))
     }
   }
