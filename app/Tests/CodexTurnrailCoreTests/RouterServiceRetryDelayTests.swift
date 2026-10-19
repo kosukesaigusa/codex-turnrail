@@ -71,13 +71,17 @@ struct RouterServiceRetryDelayTests {
     #expect(Date().timeIntervalSince(start) >= 0.04)
     let waiting = DispatchSemaphore(value: 0)
     let finished = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    // Parallel socket tests can occupy the shared dispatch pool. Own this blocked waiter.
+    let worker = Thread {
       waiting.signal()
       #expect(!messages.waitForRecovery(until: Date().addingTimeInterval(60)))
       finished.signal()
     }
-    try #require(waiting.wait(timeout: .now() + 2) == .success)
+    defer { messages.stop() }
+    worker.start()
+    try #require(waiting.wait(timeout: .now() + 15) == .success)
+    #expect(finished.wait(timeout: .now() + 0.05) == .timedOut)
     messages.stop()
-    #expect(finished.wait(timeout: .now() + 2) == .success)
+    #expect(finished.wait(timeout: .now() + 5) == .success)
   }
 }
