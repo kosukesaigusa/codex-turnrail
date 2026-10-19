@@ -245,6 +245,16 @@ final class RouterMessages: @unchecked Sendable {
     upstream = socket
   }
 
+  /// Respect a bounded service cooldown while desktop cancellation remains immediate.
+  func waitForRecovery(until deadline: Date) -> Bool {
+    condition.lock()
+    defer { condition.unlock() }
+    while !stopped && deadline.timeIntervalSinceNow > 0 {
+      condition.wait(until: deadline)
+    }
+    return !stopped
+  }
+
   func stop() {
     condition.lock()
     stopped = true

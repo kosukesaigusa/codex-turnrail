@@ -12,6 +12,7 @@ final class RouterRuntime: @unchecked Sendable {
   private let search: @Sendable (URLRequest) throws -> Data
   private let reportFailure: @Sendable (String) -> Void
   private let transportLog: RouterTransportLog
+  private let serviceLog: RouterServiceLog
 
   convenience init(root: URL, engine: URL, engineVersion: String) throws {
     try self.init(
@@ -38,6 +39,7 @@ final class RouterRuntime: @unchecked Sendable {
     let storage = root.appending(path: "router")
     ledger = try RouterLedger(root: storage)
     transportLog = RouterTransportLog(root: storage)
+    serviceLog = RouterServiceLog(root: storage)
     sessionDirectory = storage.appending(path: "sessions/\(UUID().uuidString)")
     try RouterJSON.privateDirectory(sessionDirectory)
     listener = try RouterListener()
@@ -306,17 +308,7 @@ final class RouterRuntime: @unchecked Sendable {
           let type = try RouterJSON.text(event, "type")
           progress?.received(type: type)
           if ["error", "response.failed", "response.incomplete"].contains(type) {
-            let failure = try RouterServiceFailure(event: event)
-            if downstream.transport == .webSocket, failure.isWebSocketConnectionLimit {
-              // The service expired this connection, including during a response.
-              // Let the Engine recover once with its completed output and tool results.
-              // Closing both sockets restores full history on the same account.
-              try ledger.rejectConnectionLimit(fingerprint, turn: key)
-              try downstream.frame(RouterJSON.data(RouterServiceFailure.connectionLimitRetryEvent))
-              currentTurn = nil
-              return
-            }
-            throw failure
+            throw try RouterServiceFailure(event: event)
           }
           if type == "response.output_item.done" {
             output.append(try RouterJSON.map(event, "item"))
@@ -346,6 +338,14 @@ final class RouterRuntime: @unchecked Sendable {
           failure.diagnosticWriteFailed = true
         }
         reported = failure
+      } else if var failure = error as? RouterServiceFailure {
+        do {
+          failure.reference = try serviceLog.record(
+            failure, request: progress?.snapshot(), transport: downstream.transport)
+        } catch {
+          failure.diagnosticWriteFailed = true
+        }
+        reported = failure
       } else {
         reported = error
       }
@@ -363,10 +363,28 @@ final class RouterRuntime: @unchecked Sendable {
         }
       }
       if let failure = reported as? RouterServiceFailure,
+        failure.isWebSocketConnectionLimit, downstream.transport == .webSocket,
+        let currentTurn, let submitted
+      {
+        do {
+          // The Engine reconnects once and reconstructs history on this account.
+          try ledger.rejectConnectionLimit(submitted, turn: currentTurn)
+          try downstream.frame(RouterJSON.data(RouterServiceFailure.connectionLimitRetryEvent))
+          return
+        } catch {
+          reported = error
+        }
+      }
+      if let failure = reported as? RouterServiceFailure,
         failure.permitsEngineRecovery, let currentTurn, let submitted
       {
         do {
           try ledger.interrupt(submitted, turn: currentTurn)
+          if let deadline = failure.retryDelay.deadline,
+            !messages.waitForRecovery(until: deadline)
+          {
+            return
+          }
           try downstream.frame(RouterJSON.data(failure.engineRecoveryEvent()))
           reportFailure("Engine service recovery: " + failure.localizedDescription)
           return

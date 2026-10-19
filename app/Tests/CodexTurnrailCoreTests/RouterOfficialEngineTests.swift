@@ -559,6 +559,7 @@ private final class FixtureSearch: @unchecked Sendable {
 
 final class FixtureModel: @unchecked Sendable {
   struct Request: Sendable {
+    let time: Date
     let account: UUID
     let body: RouterObject
     let turn: String
@@ -637,7 +638,9 @@ final class FixtureModel: @unchecked Sendable {
       let metadata = try RouterRequest.metadata(body)
       let turn = try RouterJSON.text(metadata, "turn_id")
       received.append(
-        Request(account: account, body: RouterObject(body), turn: turn, transport: transport))
+        Request(
+          time: Date(), account: account, body: RouterObject(body), turn: turn, transport: transport
+        ))
       if let rejection, rejectionDelay == 0 {
         rejectionCount -= 1
         if rejectionCount == 0 { self.rejection = nil }
