@@ -16,6 +16,7 @@ final class RouterEventStream: NSObject, RouterUpstream, URLSessionDataDelegate,
   private var terminal: Error?
   private var status: Int?
   private var mediaType: String?
+  private var retryAfter: String?
   private var receivedBytes = 0
   private var rejection = Data()
   private let createdAt = ProcessInfo.processInfo.systemUptime
@@ -125,6 +126,7 @@ final class RouterEventStream: NSObject, RouterUpstream, URLSessionDataDelegate,
     }
     status = response.statusCode
     mediaType = response.mimeType?.lowercased()
+    retryAfter = response.value(forHTTPHeaderField: "Retry-After")
     // The official Engine parses SSE bytes without a media-type gate. Validate
     // that same protocol here; a header alone cannot establish the response format.
     completionHandler(.allow)
@@ -162,8 +164,9 @@ final class RouterEventStream: NSObject, RouterUpstream, URLSessionDataDelegate,
       do {
         let body = try RouterJSON.object(rejection)
         let detail = try RouterJSON.map(body, "error")
-        finish(
-          try RouterServiceFailure(event: ["type": "error", "status": status, "error": detail]))
+        var event: [String: Any] = ["type": "error", "status": status, "error": detail]
+        if let retryAfter { event["headers"] = ["retry-after": retryAfter] }
+        finish(try RouterServiceFailure(event: event))
       } catch {
         finish(RouterFailure("The model service rejected HTTP inference (HTTP \(status))."))
       }

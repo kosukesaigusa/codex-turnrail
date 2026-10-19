@@ -2,22 +2,66 @@ import Foundation
 
 /// Exposes bounded protocol diagnostics without forwarding server messages or request content.
 struct RouterServiceFailure: LocalizedError, Sendable {
-  let description: String
-  let isMisalignmentPolicyViolation: Bool
-  let isWebSocketConnectionLimit: Bool
-  let permitsEngineRecovery: Bool
+  enum Envelope: String, Codable, Sendable {
+    case wrappedError, streamError, failedResponse, incompleteResponse
+  }
+
+  struct Field: Codable, Sendable {
+    enum State: String, Codable, Sendable { case missing, null, invalid, unrecognized, recognized }
+    let state: State
+    let value: String?
+
+    init(_ value: Any?) {
+      switch value {
+      case nil: state = .missing
+      case is NSNull: state = .null
+      case let text as String:
+        state = RouterServiceFailure.identifiers.contains(text) ? .recognized : .unrecognized
+      default: state = .invalid
+      }
+      self.value = state == .recognized ? value as? String : nil
+    }
+
+    var isAbsent: Bool { state == .missing || state == .null }
+    var diagnostic: String { value ?? state.rawValue }
+  }
+
+  let eventType: String
+  let envelope: Envelope
+  let status: Int?
+  let statusState: Field.State
+  let errorType: Field
+  let code: Field
+  let reason: Field
+  let retryDelay: RouterServiceRetryDelay
+  private let summary: String
+  var reference: String?
+  var diagnosticWriteFailed = false
   var errorDescription: String? { description }
 
   init(event: [String: Any]) throws {
     let type = try RouterJSON.text(event, "type")
     let detail: [String: Any]
-    let summary: String
     switch type {
     case "error":
-      detail = try RouterJSON.map(event, "error")
+      if event["error"] != nil {
+        guard event["code"] == nil, event["message"] == nil else {
+          throw RouterFailure("The model service returned conflicting error envelopes.")
+        }
+        detail = try RouterJSON.map(event, "error")
+        envelope = .wrappedError
+      } else {
+        // The Responses SSE error event places code/message directly on the event.
+        guard event["code"] != nil || event["message"] is String else {
+          throw RouterFailure("The model service returned an invalid stream error.")
+        }
+        detail = event.filter { $0.key != "type" }
+        envelope = .streamError
+      }
       summary = "The model service rejected the request."
     case "response.failed":
       detail = try RouterJSON.map(RouterJSON.map(event, "response"), "error")
+      envelope = .failedResponse
       summary = "The model service could not complete the response."
     case "response.incomplete":
       let response = try RouterJSON.map(event, "response")
@@ -26,36 +70,71 @@ struct RouterServiceFailure: LocalizedError, Sendable {
       } else {
         detail = [:]
       }
+      envelope = .incompleteResponse
       summary = "The model service returned an incomplete response."
     default:
       throw RouterFailure("Expected a terminal model-service failure.")
     }
-    isMisalignmentPolicyViolation =
-      type != "response.incomplete" && detail["code"] as? String == "misalignment_policy_violation"
-    isWebSocketConnectionLimit =
-      type == "error" && event["status"] as? Int == 400
-      && detail["type"] as? String == "invalid_request_error"
-      && detail["code"] as? String == "websocket_connection_limit_reached"
-    let status = event["status"] as? Int
-    permitsEngineRecovery =
-      detail["code"] as? String == "server_error"
-      && ((type == "error" && (status == 500 || status == 503)
-        && detail["type"] as? String == "server_error")
-        || (type == "response.failed"
-          && (detail["type"] == nil || detail["type"] as? String == "server_error")))
-    var diagnostics = [type]
-    if let status, (400...599).contains(status) {
+    eventType = type
+    if let value = event["status"] as? Int, (400...599).contains(value) {
+      status = value
+      statusState = .recognized
+    } else {
+      status = nil
+      let field = Field(event["status"])
+      statusState = field.isAbsent ? field.state : .invalid
+    }
+    errorType = Field(detail["type"])
+    code = Field(detail["code"])
+    reason = Field(detail["reason"])
+    retryDelay = RouterServiceRetryDelay(headers: event["headers"], now: Date())
+  }
+
+  var isMisalignmentPolicyViolation: Bool {
+    eventType != "response.incomplete" && code.value == "misalignment_policy_violation"
+  }
+
+  var isWebSocketConnectionLimit: Bool {
+    envelope == .wrappedError && status == 400 && errorType.value == "invalid_request_error"
+      && code.value == "websocket_connection_limit_reached"
+  }
+
+  /// Explicit transient status/type/code evidence is required; conflicting details stay terminal.
+  var permitsEngineRecovery: Bool {
+    guard eventType != "response.incomplete", reason.isAbsent, retryDelay.permitsRecovery else {
+      return false
+    }
+    let temporaryStatus = status.map { [500, 502, 503, 504].contains($0) } == true
+    let serverType = ["server_error", "service_unavailable_error"].contains(errorType.value)
+    let serverCode = ["server_error", "server_is_overloaded"].contains(code.value)
+    let absentStatus = statusState == .missing || statusState == .null
+    return (temporaryStatus || absentStatus)
+      && (serverType || errorType.isAbsent) && (serverCode || code.isAbsent)
+      && (temporaryStatus || serverType || serverCode)
+  }
+
+  var description: String {
+    var diagnostics = [eventType]
+    if let status {
       diagnostics.append("HTTP \(status)")
     }
-    var recognized = false
-    for field in ["type", "code", "reason"] {
-      if let value = detail[field] as? String, Self.identifiers.contains(value) {
-        diagnostics.append("\(field): \(value)")
-        recognized = true
-      }
+    let fields = [("type", errorType), ("code", code), ("reason", reason)]
+    let recognized = fields.contains { $0.1.value != nil }
+    if !recognized {
+      diagnostics.append("reason unavailable or unrecognized")
     }
-    if !recognized { diagnostics.append("reason unavailable or unrecognized") }
-    description =
+    for (name, field) in fields where !field.isAbsent || !recognized {
+      diagnostics.append("\(name): \(field.diagnostic)")
+    }
+    switch retryDelay.state {
+    case .missing, .null: break
+    case .valid: diagnostics.append("Retry-After valid")
+    case .invalid: diagnostics.append("invalid Retry-After")
+    case .excessive: diagnostics.append("Retry-After exceeds the 60-second recovery budget")
+    }
+    if let reference { diagnostics.append("ref: \(reference)") }
+    if diagnosticWriteFailed { diagnostics.append("diagnostic storage unavailable") }
+    return
       summary + " [" + diagnostics.joined(separator: "; ") + "] "
       + (permitsEngineRecovery
         ? "Recovery is delegated to the official Engine using the bound account."
@@ -88,6 +167,7 @@ struct RouterServiceFailure: LocalizedError, Sendable {
   // Free-form messages, unknown identifiers, headers and content remain private.
   private static let identifiers: Set<String> = [
     "invalid_request_error", "authentication_error", "permission_error", "server_error",
+    "service_unavailable_error", "server_is_overloaded",
     "context_length_exceeded", "invalid_encrypted_content", "invalid_prompt", "invalid_value",
     "invalid_argument", "invalid_parameter", "missing_required_parameter", "unsupported_parameter",
     "previous_response_not_found", "model_not_found", "invalid_api_key", "token_revoked",

@@ -4,6 +4,41 @@ import Testing
 @testable import CodexTurnrailCore
 
 struct RouterServiceFailureTests {
+  @Test(arguments: [500, 502, 503, 504])
+  func temporaryHTTPFailuresCanRecoverWithoutAnOptionalReasonCode(status: Int) throws {
+    for detail: [String: Any] in [
+      [:], ["type": "server_error"],
+      ["type": "service_unavailable_error", "code": NSNull()],
+    ] {
+      let failure = try RouterServiceFailure(event: [
+        "type": "error", "status": status, "error": detail,
+      ])
+      #expect(failure.permitsEngineRecovery)
+    }
+  }
+
+  @Test
+  func documentedStreamFailuresRecoverWithoutAnHTTPErrorEnvelope() throws {
+    for code in ["server_error", "server_is_overloaded"] {
+      for event: [String: Any] in [
+        ["type": "error", "error": ["code": code]],
+        ["type": "error", "code": code, "message": "PRIVATE_SERVER_TEXT"],
+        ["type": "response.failed", "response": ["error": ["code": code]]],
+      ] {
+        let failure = try RouterServiceFailure(event: event)
+        #expect(failure.permitsEngineRecovery)
+        #expect(failure.localizedDescription.contains(code))
+        #expect(try !RouterJSON.string(failure.engineRecoveryEvent()).contains("PRIVATE_"))
+      }
+    }
+    let overload = try RouterServiceFailure(event: [
+      "type": "error", "status": 503,
+      "error": ["type": "service_unavailable_error", "code": "server_is_overloaded"],
+    ])
+    #expect(overload.permitsEngineRecovery)
+    #expect(overload.localizedDescription.contains("service_unavailable_error"))
+  }
+
   @Test(arguments: [500, 503])
   func recognizedServerErrorsRetainTheEngineRetryClassificationWithoutPrivateDetails(status: Int)
     throws
@@ -39,8 +74,6 @@ struct RouterServiceFailureTests {
   func otherServiceFailuresCannotCreateRetryEvents() throws {
     for event: [String: Any] in [
       ["type": "error", "status": 400, "error": ["type": "server_error", "code": "server_error"]],
-      ["type": "error", "status": 502, "error": ["type": "server_error", "code": "server_error"]],
-      ["type": "error", "status": 504, "error": ["type": "server_error", "code": "server_error"]],
       [
         "type": "error", "status": 503,
         "error": ["type": "server_error", "code": "usage_limit_reached"],
@@ -53,8 +86,6 @@ struct RouterServiceFailureTests {
         "type": "error", "status": 503,
         "error": ["type": "server_error", "code": "misalignment_policy_violation"],
       ],
-      ["type": "error", "error": ["type": "server_error", "code": "server_error"]],
-      ["type": "error", "status": 500, "error": ["code": "server_error"]],
       [
         "type": "error", "status": 500, "error": ["type": "server_error", "code": "unknown_error"],
       ],
@@ -79,6 +110,56 @@ struct RouterServiceFailureTests {
       #expect(!failure.permitsEngineRecovery)
       #expect(failure.localizedDescription.contains("will not be retried"))
       #expect(throws: (any Error).self) { try failure.engineRecoveryEvent() }
+    }
+  }
+
+  @Test
+  func temporaryStatusesCannotOverrideTerminalUnknownOrMalformedDetails() throws {
+    for code in [
+      "token_revoked", "usage_limit_reached", "insufficient_quota", "context_length_exceeded",
+      "invalid_prompt", "misalignment_policy_violation", "cyber_policy", "bio_policy",
+      "PRIVATE_UNKNOWN_CODE",
+    ] {
+      for status in [500, 502, 503, 504] {
+        let failure = try RouterServiceFailure(event: [
+          "type": "error", "status": status,
+          "error": ["type": "server_error", "code": code],
+        ])
+        #expect(!failure.permitsEngineRecovery)
+        #expect(!failure.localizedDescription.contains("PRIVATE_"))
+      }
+    }
+    for detail: [String: Any] in [
+      ["code": 42], ["type": 42], ["reason": "content_filter"],
+      ["type": "permission_error", "code": "server_error"],
+      ["type": "PRIVATE_TYPE", "code": "server_error"],
+    ] {
+      let failure = try RouterServiceFailure(event: [
+        "type": "error", "status": 503, "error": detail,
+      ])
+      #expect(!failure.permitsEngineRecovery)
+    }
+    for status: Any in [400, 401, 403, 429, 501, 200, "503", true] {
+      let failure = try RouterServiceFailure(event: [
+        "type": "error", "status": status, "error": ["code": "server_is_overloaded"],
+      ])
+      #expect(!failure.permitsEngineRecovery)
+    }
+  }
+
+  @Test
+  func flatPolicyErrorsStayTerminalAndConflictingEnvelopesAreRejected() throws {
+    let failure = try RouterServiceFailure(event: [
+      "type": "error", "code": "misalignment_policy_violation", "message": "PRIVATE_TEXT",
+    ])
+    #expect(failure.isMisalignmentPolicyViolation)
+    #expect(!failure.permitsEngineRecovery)
+    #expect(!failure.localizedDescription.contains("PRIVATE_"))
+    #expect(throws: (any Error).self) {
+      try RouterServiceFailure(event: [
+        "type": "error", "code": "server_error",
+        "error": ["code": "misalignment_policy_violation"],
+      ])
     }
   }
 

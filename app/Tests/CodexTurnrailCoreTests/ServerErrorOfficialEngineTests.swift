@@ -6,7 +6,7 @@ import Testing
 extension RouterOfficialEngineTests {
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
-    .timeLimit(.minutes(3)), arguments: [500, 503])
+    .timeLimit(.minutes(3)), arguments: [500, 502, 503, 504])
   func serverErrorsRecoverOnTheBoundAccountWithoutRepeatingToolsOrExtendingRetries(status: Int)
     throws
   {
@@ -80,6 +80,19 @@ extension RouterOfficialEngineTests {
           "type": "response.failed",
           "response": ["error": ["code": "server_error", "message": "PRIVATE_SERVER_TEXT"]],
         ],
+        ["type": "error", "status": status, "error": [:]],
+        ["type": "error", "code": "server_error", "message": "PRIVATE_SERVER_TEXT"],
+        [
+          "type": "error",
+          "error": ["type": "service_unavailable_error", "code": "server_is_overloaded"],
+          "headers": NSNull(),
+        ],
+        ["type": "error", "code": "server_is_overloaded", "message": "PRIVATE_SERVER_TEXT"],
+        [
+          "type": "error", "status": status,
+          "error": ["type": "service_unavailable_error", "code": "server_is_overloaded"],
+          "headers": ["Retry-After": "1", "authorization": "PRIVATE_TOKEN"],
+        ],
       ] {
         provider.choose(provider.first.account.id)
         // Reject the inference after a completed command; priority changes must not rebind it.
@@ -94,6 +107,17 @@ extension RouterOfficialEngineTests {
         #expect(calls.allSatisfy { $0.transport == (webSocket ? "websocket" : "http") })
         let restored = try RouterJSON.array(#require(calls.last).body.value, "input")
         #expect(try RouterJSON.string(restored).contains("SERVER_ERROR_TOOL_RESULT"))
+        if event["headers"] is [String: Any] {
+          #expect(calls[2].time.timeIntervalSince(calls[1].time) >= 1)
+        }
+        let diagnostics = try Data(
+          contentsOf: root.url.appending(path: "router/service-diagnostics.json"))
+        let entry = try #require(RouterJSON.array(RouterJSON.object(diagnostics), "entries").last)
+        #expect(entry["permitsEngineRecovery"] as? Bool == true)
+        #expect(entry["transport"] as? String == (webSocket ? "websocket" : "http"))
+        let responseStarted = webSocket || event["status"] == nil
+        #expect(try RouterJSON.map(entry, "request")["responseStarted"] as? Bool == responseStarted)
+        #expect(!String(decoding: diagnostics, as: UTF8.self).contains("PRIVATE_"))
         executions += 1
         #expect(
           try String(contentsOf: marker, encoding: .utf8)
@@ -117,6 +141,59 @@ extension RouterOfficialEngineTests {
           == "misalignmentPolicyViolation")
       #expect(backend.requests(for: try RouterJSON.text(refused, "id")).count == 1)
       #expect(try !RouterJSON.string(refused).contains("PRIVATE_"))
+
+      // An unclassified error has no evidence authorizing replay. Keep a useful private record.
+      backend.rejectNext([
+        "type": "error", "error": ["code": "PRIVATE_UNKNOWN_CODE", "message": "PRIVATE_TEXT"],
+      ])
+      let unclassified = try runServerErrorTurn(rpc, root: root.url)
+      #expect(unclassified["status"] as? String == "failed")
+      #expect(backend.requests(for: try RouterJSON.text(unclassified, "id")).count == 1)
+      #expect(try RouterJSON.string(unclassified).contains("reason unavailable or unrecognized"))
+      #expect(try RouterJSON.string(unclassified).contains("ref:"))
+      #expect(try !RouterJSON.string(unclassified).contains("PRIVATE_"))
+      let diagnosticData = try Data(
+        contentsOf: root.url.appending(path: "router/service-diagnostics.json"))
+      let last = try #require(RouterJSON.array(RouterJSON.object(diagnosticData), "entries").last)
+      #expect(try RouterJSON.map(last, "code")["state"] as? String == "unrecognized")
+      #expect(last["permitsEngineRecovery"] as? Bool == false)
+
+      // Diagnostics are observational: a storage error must not block valid Engine recovery.
+      let diagnosticFile = root.url.appending(path: "router/service-diagnostics.json")
+      try Data("INVALID_ARCHIVE".utf8).write(to: diagnosticFile)
+      backend.rejectNext(serverError)
+      let recoveredWithoutArchive = try runServerErrorTurn(rpc, root: root.url)
+      #expect(recoveredWithoutArchive["status"] as? String == "completed")
+      executions += 1
+      #expect(try String(contentsOf: diagnosticFile, encoding: .utf8) == "INVALID_ARCHIVE")
+      try FileManager.default.removeItem(at: diagnosticFile)
+
+      // Remote compaction has its own Engine retry loop and must retain the same binding.
+      provider.choose(provider.first.account.id)
+      let compactThread = try startServerErrorThread(rpc, root: root.url)
+      _ = try rpc.request(
+        "turn/start",
+        [
+          "threadId": compactThread,
+          "input": [["type": "text", "text": "Run the marker once.", "text_elements": []]],
+        ])
+      let beforeCompact = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
+      try #require(beforeCompact["status"] as? String == "completed")
+      executions += 1
+      provider.choose(provider.second.account.id)
+      backend.rejectNext([
+        "type": "error", "status": 503,
+        "error": ["type": "service_unavailable_error", "code": "server_is_overloaded"],
+      ])
+      _ = try rpc.request("thread/compact/start", ["threadId": compactThread])
+      let compact = try RouterJSON.map(rpc.notification("turn/completed"), "turn")
+      #expect(compact["status"] as? String == "completed")
+      let compactCalls = backend.requests(for: try RouterJSON.text(compact, "id"))
+      #expect(compactCalls.count == 2)
+      #expect(compactCalls.allSatisfy { $0.account == provider.first.account.id })
+      let compactLog = try RouterJSON.object(Data(contentsOf: diagnosticFile))
+      let compactEntry = try #require(RouterJSON.array(compactLog, "entries").last)
+      #expect(try RouterJSON.map(compactEntry, "request")["kind"] as? String == "compaction")
 
       if !webSocket {
         // With one Engine retry, a persistent server error ends after two HTTP attempts.
@@ -168,7 +245,19 @@ private final class ServerErrorHTTPModel: @unchecked Sendable {
           let value = try RouterJSON.object(event)
           if value["type"] as? String == "error", let status = value["status"] as? Int {
             lock.withLock { statuses.append(status) }
-            try socket.reply(status: status, body: ["error": RouterJSON.map(value, "error")])
+            let data = try RouterJSON.data(["error": RouterJSON.map(value, "error")])
+            let retryHeader: String
+            if let headers = value["headers"] as? [String: Any] {
+              retryHeader = "Retry-After: \(try RouterJSON.text(headers, "Retry-After"))\r\n"
+            } else {
+              retryHeader = ""
+            }
+            try socket.write(
+              Data(
+                ("HTTP/1.1 \(status) Response\r\nContent-Type: application/json\r\n"
+                  + retryHeader + "Content-Length: \(data.count)\r\nConnection: close\r\n\r\n").utf8
+              )
+                + data)
             return
           }
         }
@@ -192,8 +281,8 @@ private final class ServerErrorHTTPModel: @unchecked Sendable {
   func stop() { listener.stop() }
 }
 
-private func runServerErrorTurn(_ rpc: OfficialEngineRPC, root: URL) throws -> [String: Any] {
-  let thread = try RouterJSON.text(
+private func startServerErrorThread(_ rpc: OfficialEngineRPC, root: URL) throws -> String {
+  try RouterJSON.text(
     RouterJSON.map(
       rpc.request(
         "thread/start",
@@ -201,6 +290,10 @@ private func runServerErrorTurn(_ rpc: OfficialEngineRPC, root: URL) throws -> [
           "cwd": root.path, "ephemeral": true, "approvalPolicy": "never",
           "sandbox": "workspace-write",
         ]), "thread"), "id")
+}
+
+private func runServerErrorTurn(_ rpc: OfficialEngineRPC, root: URL) throws -> [String: Any] {
+  let thread = try startServerErrorThread(rpc, root: root)
   _ = try rpc.request(
     "turn/start",
     [
