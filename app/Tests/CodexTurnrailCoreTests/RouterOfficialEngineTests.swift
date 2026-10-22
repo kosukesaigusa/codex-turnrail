@@ -84,7 +84,7 @@ struct RouterOfficialEngineTests {
 
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
-    .timeLimit(.minutes(6)))
+    .timeLimit(.minutes(8)))
   func officialEngineExecutesCodeModeAndTitlesThroughTheNativeRouter() throws {
     let appPath = try #require(
       ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])

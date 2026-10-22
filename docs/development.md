@@ -85,6 +85,8 @@ The command builds `CodexTurnrailApp` and `CodexTurnrailRouter`, adds the app re
 
 The release workflow calls the same packaging script with `--ci`, which requires an actual GitHub Actions runner and uses a 5 GiB preflight reserve. It downloads and verifies the pinned official app for its isolated fixture. Signing, notarization, and uploaded-ZIP integrity checks still run for every release. See [Releases](releases.md).
 
+The combined official Engine scenario test has an eight-minute limit. The verification command allows ten minutes including compilation. On timeout, interruption, or failure, it interrupts its isolated process group, allows up to 15 seconds for the development command to release its lock, then terminates remaining group members and reaps the command before returning. Failed or incomplete scenarios never produce a runtime verification report.
+
 Do not replace an installed Turnrail package while its router is serving ChatGPT. Restarting the official app is a user-coordinated step. Account assignments and shared conversation history remain in their existing stores.
 
 ## UI screenshots

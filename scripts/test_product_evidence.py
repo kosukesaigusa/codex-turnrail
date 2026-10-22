@@ -2,6 +2,7 @@
 
 import copy
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -106,7 +107,7 @@ class ProductEvidenceTests(unittest.TestCase):
                         return_value=report_fixture()["official_engine"],
                     ),
                     patch.object(
-                        verify_official_runtime.subprocess, "run", side_effect=fixture
+                        verify_official_runtime, "run_fixture", side_effect=fixture
                     ),
                     self.assertRaises(ValueError),
                 ):
@@ -123,6 +124,41 @@ class ProductEvidenceTests(unittest.TestCase):
             path.write_text(json.dumps(report))
             with self.assertRaisesRegex(ValueError, "official OpenAI signature"):
                 verify_report(path)
+
+    def test_failed_fixture_cannot_publish_even_a_complete_scenario_proof(self):
+        for error in (
+            subprocess.TimeoutExpired(["fixture"], 600),
+            subprocess.CalledProcessError(1, ["fixture"]),
+        ):
+            with (
+                self.subTest(error=type(error).__name__),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                router = root / "router"
+                router.write_bytes(b"fixture router")
+                report = root / "report.json"
+
+                def fixture(*args, **kwargs):
+                    proof = Path(kwargs["env"]["CODEX_TURNRAIL_TEST_PROOF"])
+                    proof.write_text(json.dumps(sorted(SCENARIOS)))
+                    raise error
+
+                with (
+                    patch.object(
+                        verify_official_runtime.official_app,
+                        "verify",
+                        return_value=report_fixture()["official_engine"],
+                    ),
+                    patch.object(
+                        verify_official_runtime, "run_fixture", side_effect=fixture
+                    ),
+                    self.assertRaises(type(error)),
+                ):
+                    verify_official_runtime.verify(
+                        root / "ChatGPT.app", router, report, False
+                    )
+                self.assertFalse(report.exists())
 
     def test_engine_only_report_is_not_product_routing_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

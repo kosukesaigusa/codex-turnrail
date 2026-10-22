@@ -8,6 +8,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -55,8 +56,28 @@ def execute(arguments, *, timeout):
 def checked(arguments, *, timeout):
     result = execute(arguments, timeout=timeout)
     if result.returncode != 0:
-        raise ValueError(f"{arguments[0]} failed with exit code {result.returncode}.")
+        command = " ".join(arguments[:3] if arguments[0] == "xcrun" else arguments[:1])
+        raise ValueError(f"{command} failed with exit code {result.returncode}.")
     return result
+
+
+def stapler(action, app, *, timeout):
+    delays = (15, 30)
+    for attempt in range(len(delays) + 1):
+        result = execute(["xcrun", "stapler", action, str(app)], timeout=timeout)
+        if result.returncode == 0:
+            return
+        if result.returncode != 68 or attempt == len(delays):
+            raise ValueError(
+                f"xcrun stapler {action} failed with exit code {result.returncode}."
+            )
+        delay = delays[attempt]
+        print(
+            f"stapler {action} could not retrieve the ticket (exit code 68); "
+            f"retrying in {delay} seconds ({attempt + 2}/3).",
+            flush=True,
+        )
+        time.sleep(delay)
 
 
 def write_json(path, value):
@@ -108,7 +129,7 @@ def preflight(environment):
 
 
 def verify_ticket(app):
-    checked(["xcrun", "stapler", "validate", str(app)], timeout=60)
+    stapler("validate", app, timeout=60)
     checked(
         ["spctl", "--assess", "--type", "execute", "--verbose=2", str(app)], timeout=60
     )
@@ -224,7 +245,7 @@ def notarize(app, output, environment):
                 f"Notarization {submission_id} is {status}; "
                 "inspect the saved status and log."
             )
-    checked(["xcrun", "stapler", "staple", str(app)], timeout=120)
+    stapler("staple", app, timeout=120)
     verify_ticket(app)
     report = {
         "submission_id": submission_id,
