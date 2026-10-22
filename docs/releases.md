@@ -105,6 +105,8 @@ python3 scripts/release.py archive /absolute/output/directory v0.2.0
 
 The notarization command resumes a matching saved submission without uploading again. It rejects changed app contents and uncertain uploads that have no saved submission ID. An `Invalid` or `Rejected` result must be resolved from Apple's log; it never produces a release archive. The final distribution ZIP is created only after successful ticket attachment and validation.
 
+Ticket attachment and validation retry only `stapler` exit code 68, at most three attempts with 15- and 30-second delays. Each retry uses the same app and accepted submission. Other failures stop immediately, and every archive still requires successful ticket validation and Gatekeeper assessment. Command failures identify the operation without exposing notarization credentials.
+
 Source publication does not require a signing certificate or notarization credentials.
 
 ## Publish the verified artifact

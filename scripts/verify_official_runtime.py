@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,35 @@ import official_app
 from product_evidence import SCENARIOS, verify_report
 from project_metadata import ROOT, read_upstream
 from runtime_evidence import sha256
+
+
+def stop_fixture(process):
+    try:
+        os.killpg(process.pid, signal.SIGINT)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait(timeout=10)
+
+
+def run_fixture(command, *, env, timeout):
+    with subprocess.Popen(
+        command, cwd=ROOT, env=env, start_new_session=True
+    ) as process:
+        try:
+            result = process.wait(timeout=timeout)
+            if result != 0:
+                raise subprocess.CalledProcessError(result, command)
+        except BaseException:
+            stop_fixture(process)
+            raise
 
 
 def verify(app, router, report, ci):
@@ -39,7 +69,7 @@ def verify(app, router, report, ci):
             "--filter",
             "RouterOfficialEngineTests",
         ]
-        subprocess.run(command, cwd=ROOT, env=environment, check=True, timeout=420)
+        run_fixture(command, env=environment, timeout=600)
         cases = json.loads(proof.read_text())
         if len(cases) != len(SCENARIOS) or set(cases) != SCENARIOS:
             raise ValueError(

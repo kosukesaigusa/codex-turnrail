@@ -167,6 +167,65 @@ class NotarizationTests(unittest.TestCase):
                 notarization.preflight(self.environment)
         self.assertNotIn(sensitive, str(failure.exception))
 
+    def test_ticket_network_errors_retry_without_another_submission(self):
+        for action in ("staple", "validate"):
+            with self.subTest(action=action):
+                attempts = []
+
+                def transient(command, *, timeout):
+                    if command[1:3] == ["stapler", action]:
+                        attempts.append(command)
+                        if len(attempts) < 3:
+                            self.calls.append(command)
+                            return subprocess.CompletedProcess(command, 68, "", "")
+                    return self.execute(command, timeout=timeout)
+
+                with (
+                    patch.object(notarization, "execute", side_effect=transient),
+                    patch("notarization.time.sleep") as sleep,
+                ):
+                    report = notarization.notarize(
+                        self.app, self.output, self.environment
+                    )
+                self.assertTrue(report["gatekeeper_accepted"])
+                self.assertEqual(len(attempts), 3)
+                self.assertEqual(
+                    [call.args[0] for call in sleep.call_args_list], [15, 30]
+                )
+                self.assertEqual(
+                    sum(call[1:3] == ["notarytool", "submit"] for call in self.calls),
+                    1,
+                )
+                (self.output / notarization.REPORT).unlink()
+                (self.app / "ticket").unlink()
+
+    def test_ticket_retries_are_bounded_and_other_errors_stop_immediately(self):
+        for action in ("staple", "validate"):
+            for code, attempts in ((68, 3), (65, 1)):
+                with self.subTest(action=action, code=code):
+                    calls = []
+
+                    def rejected(command, *, timeout):
+                        if command[1:3] == ["stapler", action]:
+                            calls.append(command)
+                            return subprocess.CompletedProcess(command, code, "", "")
+                        return self.execute(command, timeout=timeout)
+
+                    with (
+                        patch.object(notarization, "execute", side_effect=rejected),
+                        patch("notarization.time.sleep") as sleep,
+                        self.assertRaisesRegex(
+                            ValueError, f"stapler {action} failed with exit code {code}"
+                        ),
+                    ):
+                        notarization.notarize(self.app, self.output, self.environment)
+                    self.assertEqual(len(calls), attempts)
+                    self.assertEqual(sleep.call_count, attempts - 1)
+                    self.assertFalse((self.output / notarization.REPORT).exists())
+                    ticket = self.app / "ticket"
+                    if ticket.exists():
+                        ticket.unlink()
+
     def test_archive_requires_notarized_manifest_and_unchanged_report(self):
         with patch.object(
             release, "validate_distribution", return_value={"notarized": False}
