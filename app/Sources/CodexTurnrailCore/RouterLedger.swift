@@ -224,6 +224,24 @@ final class RouterLedger: @unchecked Sendable {
     }
   }
 
+  /// A closed Engine stream abandons this inference, not its immutable turn binding.
+  ///
+  /// Its fingerprint remains terminal. The Engine may submit changed input on the same turn.
+  func cancel(_ fingerprint: String, turn: String) throws {
+    try lock.withLock {
+      guard let request = try RouterJSON.map(state, "requests")[fingerprint] as? [String: Any],
+        request["turn"] as? String == turn
+      else { throw RouterFailure("Cannot cancel an unknown inference request.") }
+      switch request["state"] as? String {
+      case "completed", "cancelled": return
+      case "forwarding", "retrying":
+        try put("requests", fingerprint, ["turn": turn, "state": "cancelled"])
+        try persist()
+      default: throw RouterFailure("Cannot cancel a request that is not in flight.")
+      }
+    }
+  }
+
   /// Records an explicit connection expiry, permitting one Engine-owned resubmission.
   func rejectConnectionLimit(_ fingerprint: String, turn: String) throws {
     try lock.withLock {

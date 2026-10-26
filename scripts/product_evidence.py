@@ -25,6 +25,7 @@ SCENARIOS = {
     "compaction",
     "goal_continuation",
     "goal_resume",
+    "mailbox_steering",
     "failure_recovery",
     "web_search",
     "model_wait",
