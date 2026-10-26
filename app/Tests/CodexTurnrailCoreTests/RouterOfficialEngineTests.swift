@@ -473,6 +473,7 @@ struct RouterOfficialEngineTests {
       rpc: rpc, backend: backend, provider: provider, root: root.url)
     rpc.close()
     try OfficialEngineRecoveryFixture.verify(app: app, router: URL(filePath: routerPath))
+    try OfficialEngineMailboxFixture.verify(app: app, router: URL(filePath: routerPath))
     try OfficialEngineWaitingFixture.verify(app: app, router: URL(filePath: routerPath))
     if let proof = ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_PROOF"] {
       try RouterJSON.writePrivate(
@@ -484,7 +485,7 @@ struct RouterOfficialEngineTests {
           "connection_limit_recovery", "connection_limit_mid_response_recovery",
           "http_recovery", "http_content_validation", "tool_result_recovery",
           "receive_cancellation_recovery", "server_error_recovery", "service_unavailable_recovery",
-          "goal_continuation", "goal_resume",
+          "goal_continuation", "goal_resume", "mailbox_steering",
         ]), to: URL(filePath: proof))
     }
   }
@@ -514,7 +515,7 @@ final class FixtureAccounts: RouterAccountProviding, @unchecked Sendable {
       "shell_type": "shell_command", "visibility": "list", "supported_in_api": true, "priority": 0,
       "support_verbosity": false, "truncation_policy": ["mode": "tokens", "limit": 10000],
       "experimental_supported_tools": [], "input_modalities": ["text"], "context_window": 100000,
-      "supports_search_tool": true,
+      "supports_search_tool": true, "multi_agent_version": "v2",
     ]
     let credential = RouterCredential(
       accessToken: "SYNTHETIC_NOT_SENT_TO_NETWORK", accountID: "fixture", expiresAt: .distantFuture)

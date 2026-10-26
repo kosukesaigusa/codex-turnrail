@@ -193,6 +193,12 @@ final class RouterMessages: @unchecked Sendable {
   private var singleRequest = false
   private var upstream: (any RouterUpstream)?
 
+  var isStopped: Bool {
+    condition.lock()
+    defer { condition.unlock() }
+    return stopped
+  }
+
   func start(_ socket: RouterSocket) {
     socket.onClose { self.stop() }
     DispatchQueue(label: "Turnrail.websocket.receiver").async {

@@ -323,7 +323,15 @@ final class RouterRuntime: @unchecked Sendable {
               fingerprint, turn: key, response: RouterJSON.text(response, "id"),
               history: history)
           }
-          try downstream.frame(rawEvent)
+          do {
+            try downstream.frame(rawEvent)
+          } catch {
+            // The Engine can leave after an item while further events are already buffered.
+            // A failed delivery abandons this inference; it never authorizes a replay.
+            try ledger.cancel(fingerprint, turn: key)
+            reportFailure("Engine response delivery ended: " + error.localizedDescription)
+            return
+          }
           if type == "response.completed" {
             currentTurn = nil
             break
@@ -348,6 +356,17 @@ final class RouterRuntime: @unchecked Sendable {
         reported = failure
       } else {
         reported = error
+      }
+      if let failure = reported as? RouterTransportFailure,
+        failure.cause == .localClose, messages.isStopped
+      {
+        do {
+          if let currentTurn, let submitted { try ledger.cancel(submitted, turn: currentTurn) }
+          reportFailure("Engine cancelled inference [\(failure.diagnostic)].")
+          return
+        } catch {
+          reported = error
+        }
       }
       if let failure = reported as? RouterTransportFailure,
         failure.permitsEngineRecovery, let currentTurn
