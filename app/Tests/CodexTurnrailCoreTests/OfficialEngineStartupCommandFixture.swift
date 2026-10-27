@@ -4,19 +4,6 @@ import Testing
 
 @testable import CodexTurnrailCore
 
-extension RouterOfficialEngineTests {
-  @Test(
-    .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
-    .timeLimit(.minutes(1)))
-  func desktopStartupCommandPreservesOfficialJSONErrorsAndExplicitSignOut() throws {
-    try OfficialEngineStartupCommandFixture.verify(
-      app: URL(
-        filePath: #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])),
-      router: URL(
-        filePath: #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])))
-  }
-}
-
 /// Run the desktop's one-shot command with closed stdin, isolated auth, and no router registry.
 enum OfficialEngineStartupCommandFixture {
   static func verify(app: URL, router: URL) throws {
