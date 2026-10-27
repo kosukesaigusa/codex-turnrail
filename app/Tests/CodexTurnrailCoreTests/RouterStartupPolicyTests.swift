@@ -5,6 +5,45 @@ import Testing
 
 struct RouterStartupPolicyTests {
   @Test
+  func startupCommandIsDistinctFromAnInferenceSession() throws {
+    for args in [
+      ["app-server", "--print-startup-config"],
+      [
+        "--strict-config", "-c", "features.apps=false", "app-server", "--print-startup-config",
+        "--startup-client-info", "{\"name\":\"codex_desktop\"}", "--startup-sign-out",
+      ],
+      [
+        "app-server", "--analytics-default-enabled", "--print-startup-config",
+        "--startup-client-info={\"name\":\"codex_desktop\"}", "--config=analytics.enabled=false",
+      ],
+    ] {
+      #expect(try RouterEngineObserver.entryPoint(args) == .startupConfiguration)
+    }
+    #expect(try RouterEngineObserver.entryPoint(["app-server"]) == .appServer)
+    #expect(
+      try RouterEngineObserver.entryPoint(["app-server", "-c", "label=\"--print-startup-config\""])
+        == .appServer)
+  }
+
+  @Test
+  func startupCommandCannotRunSubcommandsOrMistakeAnOptionValueForItsMode() {
+    for args in [
+      ["app-server", "daemon", "--print-startup-config"],
+      ["app-server", "proxy", "--print-startup-config"],
+      ["app-server", "--print-startup-config", "--listen=ws://127.0.0.1"],
+      ["app-server", "--startup-client-info", "--print-startup-config"],
+      ["app-server", "--print-startup-config", "--startup-client-info"],
+      ["app-server", "--startup-sign-out"],
+      ["app-server", "--startup-client-info={}"],
+      ["app-server", "--print-startup-config=false"],
+      ["app-server", "--print-startup-config", "--config="],
+      ["app-server", "--print-startup-config", "--unknown"],
+    ] {
+      #expect(throws: RouterFailure.self) { try RouterEngineObserver.entryPoint(args) }
+    }
+  }
+
+  @Test
   func recognizesOnlyTheDedicatedDesktopInitialization() throws {
     let initialize = startupInitialization()
     #expect(RouterStartupPolicy.isInitialization(initialize))

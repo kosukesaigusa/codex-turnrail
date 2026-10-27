@@ -308,16 +308,16 @@ struct RouterRoutingTests {
   @Test
   func observerAcceptsDesktopGlobalOptionsAndRegistersBeforeReply() throws {
     #expect(
-      try RouterEngineObserver.isAppServer([
+      try RouterEngineObserver.entryPoint([
         "-c", "features.code_mode_host=true", "app-server", "--analytics-default-enabled", "-c",
         "plugins.example.enabled=true",
-      ]))
-    #expect(try !RouterEngineObserver.isAppServer(["--version"]))
+      ]) == .appServer)
+    #expect(try RouterEngineObserver.entryPoint(["--version"]) == .information)
     #expect(throws: (any Error).self) {
-      try RouterEngineObserver.isAppServer(["exec", "a prompt"])
+      try RouterEngineObserver.entryPoint(["exec", "a prompt"])
     }
     #expect(throws: (any Error).self) {
-      try RouterEngineObserver.isAppServer(["app-server", "--listen=ws://127.0.0.1"])
+      try RouterEngineObserver.entryPoint(["app-server", "--listen=ws://127.0.0.1"])
     }
     let observer = RouterEngineObserver()
     try observer.request([

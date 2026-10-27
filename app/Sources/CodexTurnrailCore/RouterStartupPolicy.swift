@@ -1,11 +1,44 @@
 import Foundation
 
-/// The desktop uses a dedicated connection to load organization requirements and configuration.
+/// Admit official startup configuration commands and dedicated policy RPC connections.
 ///
-/// This connection must reach the official Engine before account routing starts.
-/// It permits policy/configuration reads and the desktop's explicit sign-out flow, never tasks
-/// or inference. The initialization envelope comes from the desktop protocol.
+/// These entry points reach the official Engine before account routing starts.
+/// They permit policy/configuration reads and the desktop's explicit sign-out flow, never tasks
+/// or inference. Command arguments and initialization envelopes follow the desktop protocol.
 enum RouterStartupPolicy {
+  /// Admit only the one-shot policy command; the official Engine validates its values.
+  static func validateCommand(_ options: [String]) throws {
+    let valued = ["-c", "--config", "--enable", "--disable", "--startup-client-info"]
+    let switches = ["--analytics-default-enabled", "--strict-config", "--startup-sign-out"]
+    var index = 0
+    var printConfiguration = false
+    while index < options.count {
+      let option = options[index]
+      if option == "--print-startup-config" {
+        printConfiguration = true
+        index += 1
+      } else if valued.contains(option) {
+        guard index + 1 < options.count, !options[index + 1].hasPrefix("-") else {
+          throw RouterFailure("Missing official startup option value.")
+        }
+        index += 2
+      } else if valued.filter({ $0.hasPrefix("--") }).contains(where: { option.hasPrefix($0 + "=") }
+      ) {
+        guard !option.hasSuffix("=") else {
+          throw RouterFailure("Missing official startup option value.")
+        }
+        index += 1
+      } else if switches.contains(option) {
+        index += 1
+      } else {
+        throw RouterFailure("The startup command only supports organization policy checks.")
+      }
+    }
+    guard printConfiguration else {
+      throw RouterFailure("The startup command must print the official configuration.")
+    }
+  }
+
   static func isInitialization(_ message: [String: Any]) -> Bool {
     guard message["method"] as? String == "initialize",
       message["id"] as? String == "network-initialize",

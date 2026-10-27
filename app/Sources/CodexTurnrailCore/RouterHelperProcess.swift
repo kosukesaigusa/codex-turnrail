@@ -2,11 +2,11 @@ import Darwin
 import Foundation
 import Security
 
-/// The signed native Computer Use service starts its own policy/authentication CLI.
+/// Official startup commands and native helpers run without account routing.
 ///
-/// It inherits the desktop's CLI override, but must not own a second routing ledger.
-/// Identify the running caller by its OpenAI signature, then preserve its official
-/// protocol and configuration unchanged. This does not grant Computer Use access.
+/// A one-shot startup command retains the official configuration and explicit sign-out flow.
+/// The signed Computer Use service is identified by its OpenAI signature before replacing
+/// its CLI. Neither path owns a routing ledger or grants Computer Use access.
 enum RouterHelperProcess {
   static func isComputerUseService(processID: pid_t) throws -> Bool {
     var code: SecCode?
@@ -56,6 +56,6 @@ enum RouterHelperProcess {
         _ = execve(engine.path, argv.baseAddress!, envp.baseAddress!)
       }
     }
-    throw RouterFailure("Could not start the official Computer Use helper Engine (\(errno)).")
+    throw RouterFailure("Could not start the official Engine (\(errno)).")
   }
 }

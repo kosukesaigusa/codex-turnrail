@@ -118,8 +118,10 @@ final class RouterEngineObserver: @unchecked Sendable {
   private let lock = NSLock()
   private var titles = Set<String>()
 
-  static func isAppServer(_ arguments: [String]) throws -> Bool {
-    if [["--version"], ["-V"], ["--help"], ["-h"]].contains(arguments) { return false }
+  enum EntryPoint: Equatable { case information, startupConfiguration, appServer }
+
+  static func entryPoint(_ arguments: [String]) throws -> EntryPoint {
+    if [["--version"], ["-V"], ["--help"], ["-h"]].contains(arguments) { return .information }
     var index = 0
     while index < arguments.count {
       let value = arguments[index]
@@ -139,6 +141,14 @@ final class RouterEngineObserver: @unchecked Sendable {
         guard value == "app-server" else {
           throw RouterFailure("Turnrail requires the official app-server entry point.")
         }
+        let options = Array(arguments.dropFirst(index + 1))
+        if options.contains(where: {
+          ["--print-startup-config", "--startup-client-info", "--startup-sign-out"].contains($0)
+            || $0.hasPrefix("--startup-client-info=") || $0.hasPrefix("--print-startup-config=")
+        }) {
+          try RouterStartupPolicy.validateCommand(options)
+          return .startupConfiguration
+        }
         for offset in arguments.indices where offset > index {
           if arguments[offset] == "--listen" {
             guard offset + 1 < arguments.count, arguments[offset + 1] == "stdio://" else {
@@ -150,7 +160,7 @@ final class RouterEngineObserver: @unchecked Sendable {
             throw RouterFailure("Turnrail requires stdio transport.")
           }
         }
-        return true
+        return .appServer
       }
     }
     throw RouterFailure("Missing official Engine entry point.")

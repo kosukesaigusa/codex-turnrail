@@ -472,6 +472,7 @@ struct RouterOfficialEngineTests {
     try OfficialEngineConnectionLimitFixture.verify(
       rpc: rpc, backend: backend, provider: provider, root: root.url)
     rpc.close()
+    try OfficialEngineStartupCommandFixture.verify(app: app, router: URL(filePath: routerPath))
     try OfficialEngineRecoveryFixture.verify(app: app, router: URL(filePath: routerPath))
     try OfficialEngineMailboxFixture.verify(app: app, router: URL(filePath: routerPath))
     try OfficialEngineWaitingFixture.verify(app: app, router: URL(filePath: routerPath))
@@ -485,7 +486,7 @@ struct RouterOfficialEngineTests {
           "connection_limit_recovery", "connection_limit_mid_response_recovery",
           "http_recovery", "http_content_validation", "tool_result_recovery",
           "receive_cancellation_recovery", "server_error_recovery", "service_unavailable_recovery",
-          "goal_continuation", "goal_resume", "mailbox_steering",
+          "goal_continuation", "goal_resume", "mailbox_steering", "desktop_startup_command",
         ]), to: URL(filePath: proof))
     }
   }
