@@ -16,12 +16,18 @@ public enum OfficialEngineRouter {
     }
     let installed = try OfficialEngineInstallation.verify(app: URL(filePath: appPath))
     let engine = installed.paths.launcher
-    if try !RouterEngineObserver.isAppServer(arguments) {
+    switch try RouterEngineObserver.entryPoint(arguments) {
+    case .information:
       let result = try CommandExecutor.live.execute(
         engine, arguments: arguments, environment: environment)
       try FileHandle.standardOutput.write(contentsOf: Data(result.standardOutput.utf8))
       try FileHandle.standardError.write(contentsOf: Data(result.standardError.utf8))
       return result.exitCode
+    case .startupConfiguration:
+      // This command consumes no RPC input and must produce the official startup JSON.
+      try RouterHelperProcess.replace(
+        engine: engine, arguments: arguments, environment: environment)
+    case .appServer: break
     }
     if try RouterHelperProcess.isComputerUseService(processID: getppid()) {
       try RouterHelperProcess.replace(
