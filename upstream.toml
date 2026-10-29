@@ -5,6 +5,6 @@ commit = "4607249e430dac1c961df4dc615beae88e33cec8"
 
 [app]
 bundle_identifier = "com.openai.codex"
-version = "26.1023.51421"
-build = "22530"
-cli_version = "codex-cli 0.165.0-alpha.1.2"
+version = "26.1027.30824"
+build = "22943"
+cli_version = "codex-cli 0.166.0-alpha.5.1"
