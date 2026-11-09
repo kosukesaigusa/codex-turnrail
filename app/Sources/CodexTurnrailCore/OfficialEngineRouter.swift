@@ -110,6 +110,7 @@ public enum OfficialEngineRouter {
                   appVersion: installed.identity.appVersion)
               }
               try observer.request(message)
+              try runtime?.observeRequest(message)
             }
           } catch {
             guard let id = message["id"] else { throw error }
@@ -132,9 +133,12 @@ public enum OfficialEngineRouter {
     while let raw = try reader.next() {
       let message = try RouterJSON.object(raw)
       do {
-        if let runtime { try observer.response(message, register: runtime.registerTitle) }
+        if let runtime {
+          try runtime.observeResponse(message)
+          try observer.response(message, register: runtime.registerTitle)
+        }
       } catch {
-        // A title-routing failure belongs to that request, not to every active task.
+        // A response-specific routing failure belongs to that request, not every active task.
         guard message["method"] == nil, let id = message["id"] else { throw error }
         var reply = try RouterJSON.data([
           "id": id, "error": ["code": -32603, "message": error.localizedDescription],

@@ -105,7 +105,7 @@ enum OfficialEngineWaitingFixture {
   }
 }
 
-private final class WaitingModelServer: @unchecked Sendable {
+final class WaitingModelServer: @unchecked Sendable {
   private let listener: RouterListener
   private let lock = NSLock()
   private var received: [Data] = []

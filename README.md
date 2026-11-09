@@ -30,7 +30,7 @@ Only the app ZIP is needed. No Terminal commands are required.
 2. In **Folders**, add a folder and assign its permitted accounts.
 3. Review quota in **Folders**. Use an account's **…** menu to **Move Up**, **Move Down**, or **Prioritize** it. Numbers show the order in which accounts are selected. Then select **Open Codex** to launch ChatGPT with Turnrail's account routing.
 
-Folder rules apply to subfolders. Turnrail selects an available account from the matching rule before each turn. Active turns keep their account; changes apply to the next turn.
+Folder rules apply to subfolders. Turnrail selects an available account from the matching rule before each turn. Active turns keep their account; changes apply to the next turn, including when resuming an interrupted task.
 
 **Folders** and **Accounts** show remaining usage, reset times, and last-used times. Select **available resets** to view each saved reset and its expiration date. Reset counts appear only when at least one is available. Reauthentication and account removal are in the **Accounts** menu.
 
