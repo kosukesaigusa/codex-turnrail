@@ -7,6 +7,7 @@ final class RouterRuntime: @unchecked Sendable {
   let sessionDirectory: URL
   let secret = UUID().uuidString + UUID().uuidString
   private let hookLock = NSLock()
+  private let resumes = RouterResumeTracker()
   private let connect: @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream
   private let connectHTTP: @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream
   private let search: @Sendable (URLRequest) throws -> Data
@@ -103,6 +104,47 @@ final class RouterRuntime: @unchecked Sendable {
       thread: RouterJSON.text(thread, "id"), cwd: cwd, account: account.account.id)
   }
 
+  func observeRequest(_ message: [String: Any]) throws {
+    if message["method"] as? String == "turn/start",
+      let params = message["params"] as? [String: Any],
+      params["turnTrigger"] as? String == "resume_interrupted_task",
+      let input = params["input"] as? [Any], input.isEmpty,
+      params["toolOutput"] == nil || params["toolOutput"] is NSNull,
+      try ledger.title(RouterJSON.text(params, "threadId")) != nil
+    {
+      throw RouterFailure("An automatic title task cannot resume an interrupted user turn.")
+    }
+    try resumes.request(message)
+  }
+
+  func observeResponse(_ message: [String: Any]) throws {
+    try resumes.response(message)
+  }
+
+  func bindResumedTurn(_ metadata: [String: Any]) throws {
+    guard metadata["turn_trigger"] as? String == "resume_interrupted_task",
+      metadata["request_kind"] as? String == "turn"
+    else { return }
+    let source = try RouterRequest.optionalMetadataText(metadata, "thread_source")
+    guard !["thread_title", "subagent", "guardian_review"].contains(source) else { return }
+    let thread = try RouterJSON.text(metadata, "thread_id")
+    let turn = try RouterJSON.text(metadata, "turn_id")
+    let key = try RouterLedger.key(thread, turn)
+    try hookLock.withLock {
+      guard try ledger.title(thread) == nil else {
+        throw RouterFailure("Title task classification changed.")
+      }
+      if try ledger.bound(key) != nil { return }
+      guard let cwd = try resumes.claim(thread: thread, turn: turn) else {
+        throw RouterFailure("The resumed turn was not admitted by the Engine observer.")
+      }
+      // Resumption starts a new turn and uses the ordinary folder selection.
+      let account = try accounts.select(cwd: cwd).account.id
+      try ledger.bind(key, account: account)
+      try recordLastUsed(account)
+    }
+  }
+
   func hook(_ event: [String: Any]) throws -> [String: Any] {
     try hookLock.withLock {
       let thread = try RouterJSON.text(event, "session_id")
@@ -112,7 +154,13 @@ final class RouterRuntime: @unchecked Sendable {
       case "Stop": try ledger.stop(thread, turn: turn)
       case "PreCompact":
         if try ledger.bound(key) == nil {
-          try ledger.bind(key, account: ledger.completedAccount(thread))
+          if let cwd = try resumes.claim(thread: thread, turn: turn) {
+            let account = try accounts.select(cwd: cwd).account.id
+            try ledger.bind(key, account: account)
+            try recordLastUsed(account)
+          } else {
+            try ledger.bind(key, account: ledger.completedAccount(thread))
+          }
         }
       case "UserPromptSubmit":
         // Spawned agents carry their identity in hooks, but the exact parent turn
@@ -121,6 +169,7 @@ final class RouterRuntime: @unchecked Sendable {
           _ = try RouterJSON.text(event, "agent_id")
           return ["continue": true]
         }
+        resumes.remember(thread: thread, cwd: try RouterJSON.text(event, "cwd"))
         if try ledger.bound(key) == nil {
           let account = try accounts.select(cwd: RouterJSON.text(event, "cwd"))
           try ledger.bind(key, account: account.account.id)
@@ -278,6 +327,7 @@ final class RouterRuntime: @unchecked Sendable {
             ]))
           continue
         }
+        try bindResumedTurn(metadata)
         let (key, accountID) = try RouterRequest.binding(metadata, ledger: ledger)
         currentTurn = key
         let account = try accounts.bound(accountID)

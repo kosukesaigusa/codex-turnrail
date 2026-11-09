@@ -476,6 +476,7 @@ struct RouterOfficialEngineTests {
     try OfficialEngineRecoveryFixture.verify(app: app, router: URL(filePath: routerPath))
     try OfficialEngineMailboxFixture.verify(app: app, router: URL(filePath: routerPath))
     try OfficialEngineWaitingFixture.verify(app: app, router: URL(filePath: routerPath))
+    try OfficialEngineInterruptedResumeFixture.verify(app: app, router: URL(filePath: routerPath))
     if let proof = ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_PROOF"] {
       try RouterJSON.writePrivate(
         RouterJSON.data([
@@ -487,6 +488,7 @@ struct RouterOfficialEngineTests {
           "http_recovery", "http_content_validation", "tool_result_recovery",
           "receive_cancellation_recovery", "server_error_recovery", "service_unavailable_recovery",
           "goal_continuation", "goal_resume", "mailbox_steering", "desktop_startup_command",
+          "interrupted_session_resume",
         ]), to: URL(filePath: proof))
     }
   }
@@ -505,6 +507,7 @@ final class FixtureAccounts: RouterAccountProviding, @unchecked Sendable {
   let second: RouterAccountSnapshot
   private let lock = NSLock()
   private var selected: UUID
+  private var selectionCount = 0
 
   init(root: URL) throws {
     self.root = root
@@ -534,9 +537,14 @@ final class FixtureAccounts: RouterAccountProviding, @unchecked Sendable {
   }
 
   func choose(_ id: UUID) { lock.withLock { selected = id } }
+  var selections: Int { lock.withLock { selectionCount } }
   func select(cwd: String) throws -> RouterAccountSnapshot {
     guard cwd == root.path else { throw RouterFailure("Unknown fixture folder.") }
-    return try bound(lock.withLock { selected })
+    let id = lock.withLock {
+      selectionCount += 1
+      return selected
+    }
+    return try bound(id)
   }
   func bound(_ id: UUID) throws -> RouterAccountSnapshot {
     guard let account = [first, second].first(where: { $0.account.id == id }) else {
@@ -584,6 +592,7 @@ final class FixtureModel: @unchecked Sendable {
   private var epoch = 0
   private var opened: [UUID] = []
   private var refusedConnections = 0
+  private var nextRequestCallback: (@Sendable () -> Void)?
 
   var connectionEpoch: Int { lock.withLock { epoch } }
   var openedAccounts: [UUID] { lock.withLock { opened } }
@@ -599,6 +608,9 @@ final class FixtureModel: @unchecked Sendable {
   }
 
   func setTool(_ source: String) { lock.withLock { toolSource = source } }
+  func onNextRequest(_ callback: @escaping @Sendable () -> Void) {
+    lock.withLock { nextRequestCallback = callback }
+  }
   func failNextRequest(afterCreated: Bool) {
     interrupt(after: 0, count: 1, at: afterCreated ? .created : .empty, onInterruption: {})
   }
@@ -643,6 +655,9 @@ final class FixtureModel: @unchecked Sendable {
         Request(
           time: Date(), account: account, body: RouterObject(body), turn: turn, transport: transport
         ))
+      let callback = nextRequestCallback
+      nextRequestCallback = nil
+      callback?()
       if let rejection, rejectionDelay == 0 {
         rejectionCount -= 1
         if rejectionCount == 0 { self.rejection = nil }

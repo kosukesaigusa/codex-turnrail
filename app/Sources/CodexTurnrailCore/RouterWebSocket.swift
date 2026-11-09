@@ -344,7 +344,7 @@ enum RouterRequest {
     return (key, account)
   }
 
-  private static func optionalMetadataText(_ metadata: [String: Any], _ key: String) throws
+  static func optionalMetadataText(_ metadata: [String: Any], _ key: String) throws
     -> String?
   {
     guard metadata[key] != nil else { return nil }
