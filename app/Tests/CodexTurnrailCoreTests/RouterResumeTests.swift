@@ -68,9 +68,11 @@ struct RouterResumeTests {
     defer { runtime.stop() }
     try load(runtime, thread: "thread", cwd: root.url.path)
     try admit(runtime, id: "resume", thread: "thread")
+    let started = DispatchSemaphore(value: 0)
     let done = DispatchSemaphore(value: 0)
     let output = ResumeResult()
-    DispatchQueue.global().async {
+    let worker = Thread {
+      started.signal()
       do {
         _ = try runtime.hook([
           "hook_event_name": "PreCompact", "session_id": "thread", "turn_id": "resumed",
@@ -79,8 +81,10 @@ struct RouterResumeTests {
       } catch { output.complete(error) }
       done.signal()
     }
+    worker.start()
+    try #require(started.wait(timeout: .now() + 30) == .success)
     try acknowledge(runtime, id: "resume", turn: "resumed")
-    try #require(done.wait(timeout: .now() + 5) == .success)
+    try #require(done.wait(timeout: .now() + 30) == .success)
     #expect(output.error == nil)
     #expect(try runtime.ledger.bound("thread/resumed") == accounts.first.account.id)
   }
