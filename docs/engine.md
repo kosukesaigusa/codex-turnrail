@@ -12,7 +12,7 @@ Every product routing fixture verifies OpenAI's signing team, exact app identity
 
 ## Product implementation
 
-Account selection, Keychain inspection, turn bindings, model catalog intersection, title registration, and WebSocket history recovery live in `app/Sources/CodexTurnrailCore/Router*.swift` and `OfficialEngine*.swift`. `CodexTurnrailRouter` is the small executable that starts the verified official Engine and relays app-server stdio.
+Account selection, Keychain inspection, turn bindings, model catalog intersection, title registration, and WebSocket history recovery live in `app/Sources/CodexTurnrailCore/Router*.swift` and `OfficialEngine*.swift`. `CodexTurnrailRouter` starts a stdio bridge and replaces itself with the verified official Engine, preserving the desktop's expected process ancestry.
 
 The official app remains signed in to its original account. Model inference is routed separately; connected Apps and account-owned file services retain the original sign-in. The [architecture guide](architecture.md) defines this boundary and its effect on server-side file IDs.
 
