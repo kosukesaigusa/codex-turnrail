@@ -52,11 +52,13 @@ def verify(app, router, report, ci):
     router_hash = sha256(router)
     with tempfile.TemporaryDirectory(prefix="turnrail-runtime-proof-") as temporary:
         proof = Path(temporary) / "scenarios.json"
+        bridge_proof = Path(temporary) / "bridge.txt"
         environment = dict(os.environ)
         environment.update(
             CODEX_TURNRAIL_TEST_OFFICIAL_APP=str(app),
             CODEX_TURNRAIL_TEST_ROUTER=str(router),
             CODEX_TURNRAIL_TEST_PROOF=str(proof),
+            CODEX_TURNRAIL_TEST_BRIDGE_PROOF=str(bridge_proof),
         )
         command = [sys.executable, str(ROOT / "scripts/dev.py")]
         if ci:
@@ -66,11 +68,29 @@ def verify(app, router, report, ci):
             "test",
             "--jobs",
             "2",
-            "--filter",
-            "RouterOfficialEngineTests",
         ]
-        run_fixture(command, env=environment, timeout=600)
+        # Run this complete turn independently of the long-running recovery suite.
+        run_fixture(
+            [*command, "--filter", "RouterEngineBridgeOfficialTests"],
+            env=environment,
+            timeout=180,
+        )
+        if (
+            not bridge_proof.is_file()
+            or bridge_proof.read_text() != "bridge_routed_turn\n"
+        ):
+            raise ValueError(
+                "The official Engine bridge scenario was skipped or incomplete."
+            )
+        run_fixture(
+            [*command, "--filter", "RouterOfficialEngineTests"],
+            env=environment,
+            timeout=600,
+        )
         cases = json.loads(proof.read_text())
+        if not isinstance(cases, list):
+            raise ValueError("Invalid official Engine scenario evidence.")
+        cases.append("bridge_routed_turn")
         if len(cases) != len(SCENARIOS) or set(cases) != SCENARIOS:
             raise ValueError(
                 "The official Engine scenarios were skipped or incomplete."

@@ -35,6 +35,76 @@ def report_fixture():
 
 
 class ProductEvidenceTests(unittest.TestCase):
+    @staticmethod
+    def write_fixture_proof(command, environment):
+        if command[-1] == "RouterEngineBridgeOfficialTests":
+            Path(environment["CODEX_TURNRAIL_TEST_BRIDGE_PROOF"]).write_text(
+                "bridge_routed_turn\n"
+            )
+        elif command[-1] == "RouterOfficialEngineTests":
+            Path(environment["CODEX_TURNRAIL_TEST_PROOF"]).write_text(
+                json.dumps(sorted(SCENARIOS - {"bridge_routed_turn"}))
+            )
+        else:
+            raise AssertionError(f"Unexpected fixture command: {command}")
+
+    def test_bridge_runs_separately_and_must_leave_its_own_proof(self):
+        for bridge in ("valid", "missing", "invalid"):
+            with (
+                self.subTest(bridge=bridge),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                router = root / "router"
+                router.write_bytes(b"fixture router")
+                report = root / "report.json"
+                calls = []
+
+                def fixture(command, *, env, timeout):
+                    calls.append(command[-1])
+                    if command[-1] == "RouterEngineBridgeOfficialTests":
+                        if bridge == "invalid":
+                            Path(env["CODEX_TURNRAIL_TEST_BRIDGE_PROOF"]).write_text(
+                                "invalid"
+                            )
+                        elif bridge == "valid":
+                            self.write_fixture_proof(command, env)
+                    else:
+                        self.write_fixture_proof(command, env)
+
+                with (
+                    patch.object(
+                        verify_official_runtime.official_app,
+                        "verify",
+                        return_value=report_fixture()["official_engine"],
+                    ),
+                    patch.object(
+                        verify_official_runtime, "run_fixture", side_effect=fixture
+                    ),
+                ):
+                    if bridge == "valid":
+                        verify_official_runtime.verify(
+                            root / "ChatGPT.app", router, report, False
+                        )
+                        self.assertEqual(
+                            calls,
+                            [
+                                "RouterEngineBridgeOfficialTests",
+                                "RouterOfficialEngineTests",
+                            ],
+                        )
+                        self.assertEqual(
+                            {row["case"] for row in verify_report(report)["scenarios"]},
+                            SCENARIOS,
+                        )
+                    else:
+                        with self.assertRaisesRegex(ValueError, "bridge scenario"):
+                            verify_official_runtime.verify(
+                                root / "ChatGPT.app", router, report, False
+                            )
+                        self.assertEqual(calls, ["RouterEngineBridgeOfficialTests"])
+                        self.assertFalse(report.exists())
+
     def test_packaged_evidence_requires_launcher_manifest_and_actual_binary_hashes(
         self,
     ):
@@ -92,13 +162,13 @@ class ProductEvidenceTests(unittest.TestCase):
                 router.write_bytes(b"original")
                 report = root / "report.json"
 
-                def fixture(*args, **kwargs):
-                    proof = Path(kwargs["env"]["CODEX_TURNRAIL_TEST_PROOF"])
-                    if changed:
-                        proof.write_text(json.dumps(sorted(SCENARIOS)))
-                        router.write_bytes(b"changed")
-                    else:
-                        proof.write_text("[]")
+                def fixture(command, *, env, timeout):
+                    self.write_fixture_proof(command, env)
+                    if command[-1] == "RouterOfficialEngineTests":
+                        if changed:
+                            router.write_bytes(b"changed")
+                        else:
+                            Path(env["CODEX_TURNRAIL_TEST_PROOF"]).write_text("[]")
 
                 with (
                     patch.object(
@@ -126,23 +196,33 @@ class ProductEvidenceTests(unittest.TestCase):
                 verify_report(path)
 
     def test_failed_fixture_cannot_publish_even_a_complete_scenario_proof(self):
-        for error in (
-            subprocess.TimeoutExpired(["fixture"], 600),
-            subprocess.CalledProcessError(1, ["fixture"]),
+        for phase, error in (
+            (
+                "RouterEngineBridgeOfficialTests",
+                subprocess.TimeoutExpired(["fixture"], 180),
+            ),
+            ("RouterOfficialEngineTests", subprocess.TimeoutExpired(["fixture"], 600)),
+            (
+                "RouterOfficialEngineTests",
+                subprocess.CalledProcessError(1, ["fixture"]),
+            ),
         ):
             with (
-                self.subTest(error=type(error).__name__),
+                self.subTest(phase=phase, error=type(error).__name__),
                 tempfile.TemporaryDirectory() as temporary,
             ):
                 root = Path(temporary)
                 router = root / "router"
                 router.write_bytes(b"fixture router")
                 report = root / "report.json"
+                calls = []
 
-                def fixture(*args, **kwargs):
-                    proof = Path(kwargs["env"]["CODEX_TURNRAIL_TEST_PROOF"])
-                    proof.write_text(json.dumps(sorted(SCENARIOS)))
-                    raise error
+                def fixture(command, *, env, timeout):
+                    calls.append(command[-1])
+                    self.write_fixture_proof(["RouterEngineBridgeOfficialTests"], env)
+                    self.write_fixture_proof(["RouterOfficialEngineTests"], env)
+                    if command[-1] == phase:
+                        raise error
 
                 with (
                     patch.object(
@@ -159,6 +239,10 @@ class ProductEvidenceTests(unittest.TestCase):
                         root / "ChatGPT.app", router, report, False
                     )
                 self.assertFalse(report.exists())
+                expected = ["RouterEngineBridgeOfficialTests"]
+                if phase == "RouterOfficialEngineTests":
+                    expected.append("RouterOfficialEngineTests")
+                self.assertEqual(calls, expected)
 
     def test_engine_only_report_is_not_product_routing_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,7 +4,7 @@ import Testing
 
 @testable import CodexTurnrailCore
 
-extension RouterOfficialEngineTests {
+struct RouterEngineBridgeOfficialTests {
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
     .timeLimit(.minutes(2)))
@@ -128,6 +128,9 @@ extension RouterOfficialEngineTests {
     try #require(finished.wait(timeout: .now() + 15) == .success)
     #expect(result.status == 0)
     #expect(result.error == nil)
+    if let proof = ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_BRIDGE_PROOF"] {
+      try RouterJSON.writePrivate(Data("bridge_routed_turn\n".utf8), to: URL(filePath: proof))
+    }
   }
 }
 
@@ -151,18 +154,22 @@ private final class BridgeOfficialClient {
   }
 
   func reply(_ id: String) throws -> [String: Any] {
-    try next { $0["method"] == nil && $0["id"] as? String == id }
+    try next("response \(id)") { $0["method"] == nil && $0["id"] as? String == id }
   }
 
   func notification(_ method: String) throws -> [String: Any] {
-    try RouterJSON.map(next { $0["method"] as? String == method }, "params")
+    try RouterJSON.map(
+      next("notification \(method)") { $0["method"] as? String == method }, "params")
   }
 
-  private func next(_ matches: ([String: Any]) -> Bool) throws -> [String: Any] {
+  private func next(_ operation: String, _ matches: ([String: Any]) -> Bool) throws -> [String: Any]
+  {
     if let index = pending.firstIndex(where: matches) { return pending.remove(at: index) }
     for _ in 0..<10000 {
-      let raw = try reader.next()
-      let message = try RouterJSON.object(#require(raw))
+      guard let raw = try reader.next() else {
+        throw RouterFailure("The bridge fixture ended while waiting for \(operation).")
+      }
+      let message = try RouterJSON.object(raw)
       if matches(message) { return message }
       pending.append(message)
     }
