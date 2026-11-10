@@ -8,6 +8,7 @@ from official_runtime import LAYOUT_FILES
 PRODUCT_BINARIES = ("CodexTurnrailApp", "CodexTurnrailRouter")
 SCENARIOS = {
     "code_mode",
+    "bridge_routed_turn",
     "desktop_startup_command",
     "account_switch",
     "title_routing",
