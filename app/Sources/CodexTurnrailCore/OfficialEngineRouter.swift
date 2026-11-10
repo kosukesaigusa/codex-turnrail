@@ -11,6 +11,9 @@ public enum OfficialEngineRouter {
       }
       return hook(session: URL(filePath: arguments[1]))
     }
+    if arguments == ["router-bridge"] {
+      return try RouterEngineBridge.run(environment: environment, executable: executable)
+    }
     guard let appPath = environment["CODEX_TURNRAIL_APP"], appPath.hasPrefix("/") else {
       throw RouterFailure("CODEX_TURNRAIL_APP must name the official ChatGPT installation.")
     }
@@ -33,8 +36,20 @@ public enum OfficialEngineRouter {
       try RouterHelperProcess.replace(
         engine: engine, arguments: arguments, environment: environment)
     }
-    let input = try RouterEngineInput(FileHandle.standardInput)
-    guard input.hasInitialization else { return 0 }
+    return try RouterEngineBridge.replaceWithEngine(
+      engine: engine, arguments: arguments, environment: environment, executable: executable)
+  }
+
+  static func bridge(
+    input: RouterEngineInput, engineInput: FileHandle, engineOutput: FileHandle,
+    environment: [String: String], executable: URL, bootstrap: FileHandle,
+    ready: @Sendable () -> Void
+  ) throws -> Int32 {
+    guard let appPath = environment["CODEX_TURNRAIL_APP"], appPath.hasPrefix("/") else {
+      throw RouterFailure("CODEX_TURNRAIL_APP must name the official ChatGPT installation.")
+    }
+    let installed = try OfficialEngineInstallation.verify(app: URL(filePath: appPath))
+    let engine = installed.paths.launcher
     // This is the official CLI's documented default home, not a routing fallback.
     let home: URL
     if let configured = environment["CODEX_HOME"] {
@@ -66,34 +81,25 @@ public enum OfficialEngineRouter {
       runtime = routing
     }
     defer { runtime?.stop() }
-    let childEnvironment = RouterHelperProcess.environment(environment, engine: engine)
-    let child = try RouterEngineProcess(
-      executable: engine, arguments: arguments + overrides.flatMap { ["-c", $0] },
-      environment: childEnvironment)
+    ready()
+    try bootstrap.write(contentsOf: RouterJSON.data(["overrides": overrides]) + Data([10]))
+    try bootstrap.close()
+    return try relay(
+      input: input, engineInput: engineInput, engineOutput: engineOutput,
+      desktopOutput: .standardOutput, home: home, executable: executable, engine: engine,
+      appVersion: installed.identity.appVersion, runtime: runtime)
+  }
+
+  static func relay(
+    input: RouterEngineInput, engineInput: FileHandle, engineOutput: FileHandle,
+    desktopOutput: FileHandle, home: URL, executable: URL, engine: URL,
+    appVersion: String, runtime: RouterRuntime?
+  ) throws -> Int32 {
     let observer = RouterEngineObserver()
-    signal(SIGPIPE, SIG_IGN)
-    var signals: [DispatchSourceSignal] = []
-    for number in [SIGTERM, SIGINT, SIGHUP] {
-      signal(number, SIG_IGN)
-      let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
-      source.setEventHandler {
-        child.terminate()
-        runtime?.stop()
-      }
-      source.resume()
-      signals.append(source)
-    }
-    defer {
-      for source in signals { source.cancel() }
-      child.stop()
-    }
     let outputLock = NSLock()
-    let worker = DispatchGroup()
-    worker.enter()
     DispatchQueue(label: "Turnrail.engine.input").async {
       defer {
-        try? child.input.close()
-        worker.leave()
+        _ = shutdown(engineInput.fileDescriptor, SHUT_WR)
       }
       do {
         while let raw = try input.next() {
@@ -107,7 +113,7 @@ public enum OfficialEngineRouter {
               {
                 try RouterHelperConfiguration.synchronizePlugin(
                   home: home, router: executable, engine: engine,
-                  appVersion: installed.identity.appVersion)
+                  appVersion: appVersion)
               }
               try observer.request(message)
               try runtime?.observeRequest(message)
@@ -118,18 +124,18 @@ public enum OfficialEngineRouter {
               "id": id, "error": ["code": -32602, "message": error.localizedDescription],
             ])
             reply.append(0x0A)
-            try outputLock.withLock { try FileHandle.standardOutput.write(contentsOf: reply) }
+            try outputLock.withLock { try desktopOutput.write(contentsOf: reply) }
             continue
           }
           let prepared = RouterHelperConfiguration.prepare(
             message, router: executable, engine: engine)
           var line = try RouterJSON.data(prepared)
           line.append(0x0A)
-          try child.input.write(contentsOf: line)
+          try engineInput.write(contentsOf: line)
         }
-      } catch { child.terminate() }
+      } catch { _ = shutdown(engineInput.fileDescriptor, SHUT_RDWR) }
     }
-    let reader = EngineLineReader(child.output)
+    let reader = EngineLineReader(engineOutput)
     while let raw = try reader.next() {
       let message = try RouterJSON.object(raw)
       do {
@@ -144,14 +150,14 @@ public enum OfficialEngineRouter {
           "id": id, "error": ["code": -32603, "message": error.localizedDescription],
         ])
         reply.append(0x0A)
-        try outputLock.withLock { try FileHandle.standardOutput.write(contentsOf: reply) }
+        try outputLock.withLock { try desktopOutput.write(contentsOf: reply) }
         continue
       }
       var line = raw
       line.append(0x0A)
-      try outputLock.withLock { try FileHandle.standardOutput.write(contentsOf: line) }
+      try outputLock.withLock { try desktopOutput.write(contentsOf: line) }
     }
-    return child.wait()
+    return 0
   }
 
   private static func hook(session: URL) -> Int32 {

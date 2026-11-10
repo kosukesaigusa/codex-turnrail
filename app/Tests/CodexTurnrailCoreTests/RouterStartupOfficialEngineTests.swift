@@ -1,9 +1,121 @@
+import Darwin
 import Foundation
+import Security
 import Testing
 
 @testable import CodexTurnrailCore
 
 extension RouterOfficialEngineTests {
+  @Test(
+    .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
+    .timeLimit(.minutes(1)))
+  func routerStartsWithARestrictedDescriptorLimit() throws {
+    let app = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
+    let router = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
+    let root = try RouterTestDirectory()
+    var environment = ProcessInfo.processInfo.environment
+    environment["CODEX_HOME"] = root.url.path
+    environment["CODEX_TURNRAIL_APP"] = app
+    environment["CODEX_TURNRAIL_ROOT"] = root.url.appending(path: "registry").path
+    let process = try RouterEngineProcess(
+      executable: URL(filePath: "/bin/sh"),
+      arguments: [
+        "-c", "ulimit -n 128; exec \"$@\"", "turnrail-test", router,
+        "app-server", "--listen", "stdio://", "-c", "features.remote_models=false",
+      ], environment: environment, error: .nullDevice)
+    let deadline = DispatchWorkItem { process.forceTerminate() }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: deadline)
+    defer {
+      deadline.cancel()
+      process.stop()
+    }
+    try process.input.write(contentsOf: RouterJSON.data(startupInitialization()) + Data([10]))
+    let raw = try EngineLineReader(process.output).next()
+    let reply = try RouterJSON.object(#require(raw))
+    #expect(reply["id"] as? String == "network-initialize")
+    #expect(reply["error"] == nil)
+  }
+
+  @Test(
+    .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
+    .timeLimit(.minutes(1)), arguments: [false, true])
+  func bridgeStopsWhenItsEngineExits(initialized: Bool) throws {
+    let app = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
+    let router = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
+    let root = try RouterTestDirectory()
+    var environment = ProcessInfo.processInfo.environment
+    environment["CODEX_HOME"] = root.url.path
+    environment["CODEX_TURNRAIL_APP"] = app
+    environment["CODEX_TURNRAIL_ROOT"] = root.url.appending(path: "registry").path
+    let process = try RouterEngineProcess(
+      executable: URL(filePath: router), arguments: ["app-server", "--listen", "stdio://"],
+      environment: environment, error: .nullDevice)
+    let deadline = DispatchWorkItem { process.forceTerminate() }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 50, execute: deadline)
+    defer {
+      deadline.cancel()
+      process.stop()
+    }
+    if initialized {
+      try process.input.write(contentsOf: RouterJSON.data(startupInitialization()) + Data([10]))
+      let raw = try EngineLineReader(process.output).next()
+      #expect(try RouterJSON.object(#require(raw))["id"] as? String == "network-initialize")
+    }
+    var bridge: pid_t?
+    for _ in 0..<300 {
+      let search = try CommandExecutor.live.execute(
+        URL(filePath: "/usr/bin/pgrep"),
+        arguments: ["-P", "\(process.pid)", "-f", "router-bridge"], environment: [:])
+      if let pid = pid_t(search.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        bridge = pid
+        break
+      }
+      Thread.sleep(forTimeInterval: 0.1)
+    }
+    let bridgePID = try #require(bridge)
+    try #require(kill(process.pid, SIGKILL) == 0)
+    for _ in 0..<500 where kill(bridgePID, 0) == 0 { Thread.sleep(forTimeInterval: 0.02) }
+    #expect(kill(bridgePID, 0) == -1 && errno == ESRCH)
+    #expect(process.wait() == 1)
+  }
+
+  @Test(
+    .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
+    .timeLimit(.minutes(1)))
+  func routerReportsStartupFailureAndRemovesItsRuntimeSession() throws {
+    let app = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
+    let router = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
+    let root = try RouterTestDirectory()
+    let registry = root.url.appending(path: "registry")
+    let errors = Pipe()
+    var environment = ProcessInfo.processInfo.environment
+    environment["CODEX_HOME"] = root.url.path
+    environment["CODEX_TURNRAIL_APP"] = app
+    environment["CODEX_TURNRAIL_ROOT"] = registry.path
+    let process = try RouterEngineProcess(
+      executable: URL(filePath: router), arguments: ["app-server", "--listen", "stdio://"],
+      environment: environment, error: errors.fileHandleForWriting)
+    let deadline = DispatchWorkItem { process.forceTerminate() }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: deadline)
+    defer {
+      deadline.cancel()
+      process.stop()
+      try? errors.fileHandleForReading.close()
+      try? errors.fileHandleForWriting.close()
+    }
+    try errors.fileHandleForWriting.close()
+    try process.input.write(
+      contentsOf: RouterJSON.data([
+        "id": "normal-initialize", "method": "initialize", "params": [:],
+      ]) + Data([10]))
+    #expect(process.wait() == 1)
+    let error = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(error.contains("The Turnrail account registry is missing."))
+    let sessions = registry.appending(path: "router/sessions")
+    let remaining = try FileManager.default.contentsOfDirectory(atPath: sessions.path)
+    #expect(remaining.isEmpty)
+  }
+
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
     .timeLimit(.minutes(1)))
@@ -33,6 +145,9 @@ extension RouterOfficialEngineTests {
       defer { client.close() }
       let initialized = try client.request(startupInitialization())
       #expect(initialized["error"] == nil)
+      // The desktop's native browser authorizer checks the Engine's signing identity
+      // in the original child PID, not merely the identity of a descendant process.
+      try client.expectOfficialEngineInOriginalProcess()
       try client.send(["method": "initialized"])
       let requirements = try client.request([
         "id": "network-requirements", "method": "configRequirements/read", "params": [:],
@@ -115,6 +230,24 @@ private final class StartupPolicyClient {
 
   func send(_ message: [String: Any]) throws {
     try process.input.write(contentsOf: RouterJSON.data(message) + Data([10]))
+  }
+
+  func expectOfficialEngineInOriginalProcess() throws {
+    var code: SecCode?
+    try #require(
+      SecCodeCopyGuestWithAttributes(
+        nil, [kSecGuestAttributePid: process.pid] as CFDictionary, SecCSFlags(), &code)
+        == errSecSuccess)
+    var requirement: SecRequirement?
+    let expression =
+      "anchor apple generic and identifier \"codex\""
+      + " and certificate leaf[subject.OU] = \"2DC432GLL2\""
+    try #require(
+      SecRequirementCreateWithString(expression as CFString, SecCSFlags(), &requirement)
+        == errSecSuccess)
+    let verifiedCode = try #require(code)
+    let verifiedRequirement = try #require(requirement)
+    #expect(SecCodeCheckValidity(verifiedCode, SecCSFlags(), verifiedRequirement) == errSecSuccess)
   }
 
   func request(_ message: [String: Any]) throws -> [String: Any] {
