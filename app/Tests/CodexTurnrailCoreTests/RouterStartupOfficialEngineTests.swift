@@ -9,6 +9,45 @@ extension RouterOfficialEngineTests {
   @Test(
     .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
     .timeLimit(.minutes(1)))
+  func engineUnblocksInheritedTerminationSignal() throws {
+    let app = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
+    let router = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])
+    let root = try RouterTestDirectory()
+    var environment = ProcessInfo.processInfo.environment
+    environment["CODEX_HOME"] = root.url.path
+    environment["CODEX_TURNRAIL_APP"] = app
+    environment["CODEX_TURNRAIL_ROOT"] = root.url.appending(path: "registry").path
+    let process = try RouterEngineProcess(
+      executable: URL(filePath: "/usr/bin/env"),
+      arguments: [
+        "python3", "-c",
+        "import os,signal,sys;signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGTERM});"
+          + "os.execv(sys.argv[1],sys.argv[1:])", router,
+        "app-server", "--listen", "stdio://", "-c", "features.remote_models=false",
+      ], environment: environment, error: .nullDevice)
+    let deadline = DispatchWorkItem { process.forceTerminate() }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: deadline)
+    defer {
+      deadline.cancel()
+      process.stop()
+    }
+    try process.input.write(contentsOf: RouterJSON.data(startupInitialization()) + Data([10]))
+    let raw = try EngineLineReader(process.output).next()
+    #expect(try RouterJSON.object(#require(raw))["id"] as? String == "network-initialize")
+    try #require(kill(process.pid, SIGTERM) == 0)
+    var information = siginfo_t()
+    for _ in 0..<500 {
+      try #require(waitid(P_PID, id_t(process.pid), &information, WEXITED | WNOHANG | WNOWAIT) == 0)
+      if information.si_pid == process.pid { break }
+      Thread.sleep(forTimeInterval: 0.02)
+    }
+    try #require(information.si_pid == process.pid)
+    _ = process.wait()
+  }
+
+  @Test(
+    .enabled(if: ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"] != nil),
+    .timeLimit(.minutes(1)))
   func routerStartsWithARestrictedDescriptorLimit() throws {
     let app = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_OFFICIAL_APP"])
     let router = try #require(ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_ROUTER"])

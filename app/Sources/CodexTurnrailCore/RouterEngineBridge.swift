@@ -108,6 +108,13 @@ enum RouterEngineBridge {
     connection[0] = -1
     close(bootstrap[0])
     bootstrap[0] = -1
+    // Match the signal defaults previously applied when spawning the Engine.
+    for number in [SIGTERM, SIGINT, SIGHUP, SIGPIPE] { signal(number, SIG_DFL) }
+    var engineMask = sigset_t()
+    sigemptyset(&engineMask)
+    guard pthread_sigmask(SIG_SETMASK, &engineMask, nil) == 0 else {
+      throw RouterFailure("Could not restore the official Engine's signal mask.")
+    }
     try RouterHelperProcess.replace(
       engine: engine, arguments: arguments + overrides.flatMap { ["-c", $0] },
       environment: environment)
