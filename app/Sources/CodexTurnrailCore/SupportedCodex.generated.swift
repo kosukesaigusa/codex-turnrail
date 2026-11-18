@@ -3,8 +3,8 @@
 extension CodexCompatibilityContract {
   public static let reference = CodexCompatibilityContract(
     bundleIdentifier: "com.openai.codex",
-    appVersion: "26.1111.21308",
-    appBuild: "27194",
+    appVersion: "26.1111.71025",
+    appBuild: "28661",
     cliVersion: "codex-cli 0.169.0-alpha.11.1"
   )
 }
