@@ -17,11 +17,11 @@ struct RouterResumeTests {
     try admit(runtime, id: "resume", thread: "thread")
     try acknowledge(runtime, id: "resume", turn: "resumed")
     let metadata = request(thread: "thread", turn: "resumed")
-    try runtime.bindResumedTurn(metadata)
+    try runtime.bindAdmittedTurn(metadata)
     accounts.choose(accounts.first.account.id)
     #expect(
       try RouterRequest.binding(metadata, ledger: runtime.ledger).1 == accounts.second.account.id)
-    try runtime.bindResumedTurn(metadata)
+    try runtime.bindAdmittedTurn(metadata)
     #expect(try runtime.ledger.bound("thread/resumed") == accounts.second.account.id)
   }
 
@@ -35,12 +35,12 @@ struct RouterResumeTests {
     try admit(runtime, id: "resume", thread: "thread")
     try acknowledge(runtime, id: "resume", turn: "correct")
     #expect(throws: (any Error).self) {
-      try runtime.bindResumedTurn(request(thread: "thread", turn: "wrong"))
+      try runtime.bindAdmittedTurn(request(thread: "thread", turn: "wrong"))
     }
     #expect(throws: (any Error).self) {
-      try runtime.bindResumedTurn(request(thread: "other", turn: "correct"))
+      try runtime.bindAdmittedTurn(request(thread: "other", turn: "correct"))
     }
-    try runtime.bindResumedTurn(request(thread: "thread", turn: "correct"))
+    try runtime.bindAdmittedTurn(request(thread: "thread", turn: "correct"))
     #expect(try runtime.ledger.bound("thread/correct") == accounts.first.account.id)
   }
 
@@ -57,7 +57,7 @@ struct RouterResumeTests {
       "hook_event_name": "PreCompact", "session_id": "thread", "turn_id": "resumed",
     ])
     #expect(try runtime.ledger.bound("thread/resumed") == accounts.first.account.id)
-    try runtime.bindResumedTurn(request(thread: "thread", turn: "resumed"))
+    try runtime.bindAdmittedTurn(request(thread: "thread", turn: "resumed"))
   }
 
   @Test
@@ -92,7 +92,7 @@ struct RouterResumeTests {
   @Test
   func explicitResumeDirectoryAndUnrelatedThreadResponsesAreHandledSeparately() throws {
     let root = try RouterTestDirectory()
-    let tracker = RouterResumeTracker()
+    let tracker = RouterTurnAdmissionTracker()
     try tracker.request(["id": "load", "method": "thread/resume", "params": [:]])
     // An unrelated or malformed load response must not break the original RPC.
     try tracker.response(["id": "load", "result": ["thread": ["id": "thread"]]])
@@ -106,7 +106,8 @@ struct RouterResumeTests {
     ])
     try tracker.response(["id": "resume", "result": ["turn": ["id": "resumed"]]])
     #expect(
-      try tracker.claim(thread: "thread", turn: "resumed") == root.url.path)
+      try tracker.claim(thread: "thread", turn: "resumed", source: .model(.interruptedResume))
+        == root.url.path)
   }
 
   @Test
@@ -122,7 +123,7 @@ struct RouterResumeTests {
     try admit(runtime, id: "rejected", thread: "thread")
     try runtime.observeResponse(["id": "rejected", "error": ["code": -1]])
     #expect(throws: (any Error).self) {
-      try runtime.bindResumedTurn(request(thread: "thread", turn: "resumed"))
+      try runtime.bindAdmittedTurn(request(thread: "thread", turn: "resumed"))
     }
     #expect(try runtime.ledger.bound("thread/resumed") == nil)
     try admit(runtime, id: "next", thread: "thread")
@@ -144,7 +145,7 @@ struct RouterResumeTests {
     ])
     try acknowledge(runtime, id: "first", turn: "resumed")
     #expect(throws: (any Error).self) {
-      try runtime.bindResumedTurn(request(thread: "thread", turn: "resumed"))
+      try runtime.bindAdmittedTurn(request(thread: "thread", turn: "resumed"))
     }
     try admit(runtime, id: "second", thread: "thread")
   }
@@ -160,16 +161,16 @@ struct RouterResumeTests {
     for source in ["subagent", "guardian_review", "thread_title"] {
       var metadata = request(thread: "thread", turn: "turn")
       metadata["thread_source"] = source
-      try runtime.bindResumedTurn(metadata)
+      try runtime.bindAdmittedTurn(metadata)
       #expect(try runtime.ledger.bound("thread/turn") == nil)
     }
     var other = request(thread: "thread", turn: "turn")
     other["turn_trigger"] = "composer"
-    try runtime.bindResumedTurn(other)
+    try runtime.bindAdmittedTurn(other)
     #expect(try runtime.ledger.bound("thread/turn") == nil)
     other = request(thread: "thread", turn: "turn")
     other["thread_source"] = 42
-    #expect(throws: (any Error).self) { try runtime.bindResumedTurn(other) }
+    #expect(throws: (any Error).self) { try runtime.bindAdmittedTurn(other) }
     #expect(try runtime.ledger.bound("thread/turn") == nil)
     try runtime.ledger.registerTitle(
       thread: "title", cwd: root.url.path, account: accounts.first.account.id)
@@ -192,7 +193,7 @@ struct RouterResumeTests {
       ],
     ])
     #expect(throws: (any Error).self) {
-      try runtime.bindResumedTurn(request(thread: "thread", turn: "turn"))
+      try runtime.bindAdmittedTurn(request(thread: "thread", turn: "turn"))
     }
     #expect(try runtime.ledger.bound("thread/turn") == nil)
   }

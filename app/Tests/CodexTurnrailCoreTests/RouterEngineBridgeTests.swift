@@ -84,7 +84,7 @@ struct RouterEngineBridgeTests {
     #expect(try read(engineReader)["id"] as? String == "resume")
     try send(["id": "resume", "result": ["turn": ["id": "resumed"]]], to: engine)
     #expect(try read(desktopReader)["id"] as? String == "resume")
-    try runtime.bindResumedTurn([
+    try runtime.bindAdmittedTurn([
       "thread_id": "thread", "turn_id": "resumed", "turn_trigger": "resume_interrupted_task",
       "request_kind": "turn",
     ])

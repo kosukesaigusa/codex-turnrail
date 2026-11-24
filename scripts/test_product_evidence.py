@@ -39,11 +39,13 @@ class ProductEvidenceTests(unittest.TestCase):
     def write_fixture_proof(command, environment):
         if command[-1] == "RouterEngineBridgeOfficialTests":
             Path(environment["CODEX_TURNRAIL_TEST_BRIDGE_PROOF"]).write_text(
-                "bridge_routed_turn\n"
+                "bridge_routed_turn\nscheduled_automation\n"
             )
         elif command[-1] == "RouterOfficialEngineTests":
             Path(environment["CODEX_TURNRAIL_TEST_PROOF"]).write_text(
-                json.dumps(sorted(SCENARIOS - {"bridge_routed_turn"}))
+                json.dumps(
+                    sorted(SCENARIOS - {"bridge_routed_turn", "scheduled_automation"})
+                )
             )
         else:
             raise AssertionError(f"Unexpected fixture command: {command}")

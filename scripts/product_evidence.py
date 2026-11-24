@@ -9,6 +9,7 @@ PRODUCT_BINARIES = ("CodexTurnrailApp", "CodexTurnrailRouter")
 SCENARIOS = {
     "code_mode",
     "bridge_routed_turn",
+    "scheduled_automation",
     "desktop_startup_command",
     "account_switch",
     "title_routing",
