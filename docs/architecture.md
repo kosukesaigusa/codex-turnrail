@@ -36,6 +36,8 @@ The selected account is bound durably to the task and turn before inference. Cha
 
 Goal automatic continuations and resumptions bypass `UserPromptSubmit`. An explicit `goal` trigger with request kind `turn` inherits the same thread's last completed account binding before inference. That new turn binding is durable and immutable, including across retries and router restarts. Compaction within an already bound Goal turn retains that binding. A thread without a completed binding is rejected; an active turn or another thread's binding cannot authorize it. Goal routing does not replace title registration, child-agent parent validation, or ordinary prompt hooks. A subsequent user turn selects an account using the current folder priority.
 
+Interrupted-session resumptions and desktop automations submitted as `codex_app.automation_update` tool outputs also bypass the prompt hook. The bridge observes the desktop's start request and the Engine's response, then matches the confirmed thread, turn, and trigger before selecting an account for the effective working directory. Scheduled and manually started heartbeats and standalone automations follow the same folder rules. A turn steered into an already active turn retains its existing binding. Unconfirmed or mismatched requests cannot select an account.
+
 ## Model traffic and conversation recovery
 
 The router listens only on `127.0.0.1`, with a random endpoint secret and private endpoint metadata. It accepts bounded JSON WebSocket requests and HTTP streaming requests from the official Engine. Both transports require the same exact turn metadata and existing account binding. Browser-origin requests, ambiguous HTTP headers, unknown routing metadata, account-specific routing hints, and inference without a binding are rejected. The launch configuration disables HTTP request compression so the private endpoint can validate JSON before adding account authentication. Prewarm requests may only use `generate=false` and receive a local empty completion.
@@ -112,7 +114,7 @@ The shared account lock covers saved credential access and refresh, not the quot
 
 Quota comes from `account/rateLimits/read`. When the optional `rateLimitsByLimitId` map exists, the UI selects the general `codex` bucket; otherwise it uses the protocol's `rateLimits` snapshot. Invalid percentages are rejected. Optional reset-credit data distinguishes unknown availability, zero credits, unavailable details, partial details, and non-expiring credits. Credits are display-only.
 
-The router records **Last used** when the prompt hook successfully binds an account, before inference starts. It stores a monotonic timestamp in that account's schema-1 `last-used.json`. Failed writes stop the hook. Settings reads these records every five seconds; absent history displays `-`.
+The router records **Last used** when a prompt hook or admitted desktop turn binds an account, before inference starts. It stores a monotonic timestamp in that account's schema-1 `last-used.json`. Failed writes stop the binding. Settings reads these records every five seconds; absent history displays `-`.
 
 ## Distribution and verification
 
