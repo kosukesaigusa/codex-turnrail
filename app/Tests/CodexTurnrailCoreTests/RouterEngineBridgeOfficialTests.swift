@@ -124,12 +124,43 @@ struct RouterEngineBridgeOfficialTests {
     #expect(requests.count == 2)
     #expect(requests.allSatisfy { $0.account == accounts.first.account.id })
     #expect(try requests.contains { try RouterJSON.string($0.body.value).contains("42") })
+
+    for (index, trigger) in [
+      "automation_heartbeat_scheduled", "automation_heartbeat_run_now",
+      "automation_cron_scheduled", "automation_cron_run_now",
+    ].enumerated() {
+      accounts.choose(accounts.second.account.id)
+      backend.onNextRequest { accounts.choose(accounts.first.account.id) }
+      let started = try client.request(
+        "automation-\(index)", "turn/start",
+        [
+          "threadId": thread, "turnTrigger": trigger, "input": [Any](),
+          "toolOutput": [
+            "name": "automation_update", "namespace": "codex_app",
+            "output": "Use Code Mode for this scheduled follow-up.",
+          ],
+        ])
+      let turn = try RouterJSON.text(RouterJSON.map(started, "turn"), "id")
+      let finishedTurn = try RouterJSON.map(client.notification("turn/completed"), "turn")
+      try #require(finishedTurn["status"] as? String == "completed", "\(trigger)")
+      #expect(try RouterJSON.text(finishedTurn, "id") == turn)
+      let calls = backend.requests(for: turn)
+      try #require(calls.count == 2, "\(trigger)")
+      #expect(calls.allSatisfy { $0.account == accounts.second.account.id })
+      #expect(
+        try calls.allSatisfy {
+          try RouterRequest.metadata($0.body.value)["turn_trigger"] as? String == trigger
+        })
+      #expect(try RouterJSON.string(calls[0].body.value).contains("automation_update"))
+      #expect(try runtime.ledger.bound(thread + "/" + turn) == accounts.second.account.id)
+    }
     try desktopInput.fileHandleForWriting.close()
     try #require(finished.wait(timeout: .now() + 15) == .success)
     #expect(result.status == 0)
     #expect(result.error == nil)
     if let proof = ProcessInfo.processInfo.environment["CODEX_TURNRAIL_TEST_BRIDGE_PROOF"] {
-      try RouterJSON.writePrivate(Data("bridge_routed_turn\n".utf8), to: URL(filePath: proof))
+      try RouterJSON.writePrivate(
+        Data("bridge_routed_turn\nscheduled_automation\n".utf8), to: URL(filePath: proof))
     }
   }
 }

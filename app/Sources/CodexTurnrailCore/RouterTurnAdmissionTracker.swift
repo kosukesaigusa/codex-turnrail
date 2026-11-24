@@ -1,10 +1,24 @@
 import Foundation
 
-/// Correlates explicit desktop resume requests with the Engine's new turn.
-final class RouterResumeTracker: @unchecked Sendable {
+enum RouterAdmittedTurnTrigger: String {
+  case interruptedResume = "resume_interrupted_task"
+  case scheduledHeartbeat = "automation_heartbeat_scheduled"
+  case immediateHeartbeat = "automation_heartbeat_run_now"
+  case scheduledAutomation = "automation_cron_scheduled"
+  case immediateAutomation = "automation_cron_run_now"
+}
+
+/// Correlates desktop turn requests with the Engine's confirmed turn and directory.
+final class RouterTurnAdmissionTracker: @unchecked Sendable {
+  enum ClaimSource {
+    case model(RouterAdmittedTurnTrigger)
+    case compactHook
+  }
+
   private struct Admission {
     let request: String
     let cwd: String
+    let trigger: RouterAdmittedTurnTrigger
     var expectedTurn: String?
     var finishedTurns: Set<String> = []
   }
@@ -12,7 +26,24 @@ final class RouterResumeTracker: @unchecked Sendable {
   private let condition = NSCondition()
   private var directories: [String: String] = [:]
   private var loads: Set<String> = []
-  private var resumes: [String: Admission] = [:]
+  private var admissions: [String: Admission] = [:]
+
+  static func trigger(_ params: [String: Any]) -> RouterAdmittedTurnTrigger? {
+    guard let value = params["turnTrigger"] as? String,
+      let trigger = RouterAdmittedTurnTrigger(rawValue: value),
+      let input = params["input"] as? [Any], input.isEmpty
+    else { return nil }
+    switch trigger {
+    case .interruptedResume:
+      guard params["toolOutput"] == nil || params["toolOutput"] is NSNull else { return nil }
+    case .scheduledHeartbeat, .immediateHeartbeat, .scheduledAutomation, .immediateAutomation:
+      guard let output = params["toolOutput"] as? [String: Any],
+        output["name"] as? String == "automation_update",
+        output["namespace"] as? String == "codex_app"
+      else { return nil }
+    }
+    return trigger
+  }
 
   func remember(thread: String, cwd: String) {
     condition.withLock { directories[thread] = cwd }
@@ -25,39 +56,36 @@ final class RouterResumeTracker: @unchecked Sendable {
     if ["thread/start", "thread/resume", "thread/fork"].contains(method) {
       let id = try Self.id(message)
       try condition.withLock {
-        guard !resumes.values.contains(where: { $0.request == id }), loads.insert(id).inserted
+        guard !admissions.values.contains(where: { $0.request == id }), loads.insert(id).inserted
         else {
           throw RouterFailure("Duplicate pending thread request.")
         }
       }
       return
     }
-    guard method == "turn/start", params["turnTrigger"] as? String == "resume_interrupted_task",
-      let input = params["input"] as? [Any], input.isEmpty,
-      params["toolOutput"] == nil || params["toolOutput"] is NSNull
-    else { return }
+    guard method == "turn/start", let trigger = Self.trigger(params) else { return }
     let thread = try RouterJSON.text(params, "threadId")
     let request = try Self.id(message)
     let cwd: String
     if let override = params["cwd"], !(override is NSNull) {
-      guard let path = override as? String else { throw RouterFailure("Invalid resume directory.") }
+      guard let path = override as? String else { throw RouterFailure("Invalid turn directory.") }
       cwd = try RouterDirectory.canonical(path).path
     } else {
       let directory = try condition.withLock {
         guard let directory = directories[thread] else {
-          throw RouterFailure("Resume requires the loaded thread's working directory.")
+          throw RouterFailure("The turn requires the loaded thread's working directory.")
         }
         return directory
       }
       cwd = try RouterDirectory.canonical(directory).path
     }
     try condition.withLock {
-      guard resumes[thread] == nil, !loads.contains(request),
-        !resumes.values.contains(where: { $0.request == request })
+      guard admissions[thread] == nil, !loads.contains(request),
+        !admissions.values.contains(where: { $0.request == request })
       else {
-        throw RouterFailure("A resume request is already pending for this thread.")
+        throw RouterFailure("A turn request is already pending for this thread.")
       }
-      resumes[thread] = Admission(request: request, cwd: cwd)
+      admissions[thread] = Admission(request: request, cwd: cwd, trigger: trigger)
     }
   }
 
@@ -68,12 +96,12 @@ final class RouterResumeTracker: @unchecked Sendable {
       let turn = (params["turn"] as? [String: Any])?["id"] as? String
     {
       condition.withLock {
-        guard var admission = resumes[thread] else { return }
+        guard var admission = admissions[thread] else { return }
         if admission.expectedTurn == turn {
-          resumes.removeValue(forKey: thread)
+          admissions.removeValue(forKey: thread)
         } else if admission.expectedTurn == nil {
           admission.finishedTurns.insert(turn)
-          resumes[thread] = admission
+          admissions[thread] = admission
         }
         condition.broadcast()
       }
@@ -91,11 +119,11 @@ final class RouterResumeTracker: @unchecked Sendable {
       remember(thread: id, cwd: cwd)
     }
     try condition.withLock {
-      guard let thread = resumes.first(where: { $0.value.request == request })?.key,
-        var admission = resumes[thread]
+      guard let thread = admissions.first(where: { $0.value.request == request })?.key,
+        var admission = admissions[thread]
       else { return }
       guard message["error"] == nil else {
-        resumes.removeValue(forKey: thread)
+        admissions.removeValue(forKey: thread)
         condition.broadcast()
         return
       }
@@ -105,37 +133,40 @@ final class RouterResumeTracker: @unchecked Sendable {
         directories[thread] = admission.cwd
         admission.expectedTurn = turn
         if admission.finishedTurns.contains(turn) {
-          resumes.removeValue(forKey: thread)
+          admissions.removeValue(forKey: thread)
         } else {
-          resumes[thread] = admission
+          admissions[thread] = admission
         }
         condition.broadcast()
       } catch {
-        resumes.removeValue(forKey: thread)
+        admissions.removeValue(forKey: thread)
         condition.broadcast()
         throw error
       }
     }
   }
 
-  /// Claim an admitted resume from its model metadata, or from its compact hook.
-  func claim(thread: String, turn: String) throws -> String? {
+  /// Claim an admitted turn from its model metadata or its compact hook.
+  func claim(thread: String, turn: String, source: ClaimSource) throws -> String? {
     try condition.withLock {
-      guard resumes[thread] != nil else { return nil }
+      guard admissions[thread] != nil else { return nil }
       let deadline = Date().addingTimeInterval(10)
-      while let admission = resumes[thread], admission.expectedTurn == nil {
+      while let admission = admissions[thread], admission.expectedTurn == nil {
         guard condition.wait(until: deadline) else {
-          throw RouterFailure("The Engine did not confirm the resumed turn in time.")
+          throw RouterFailure("The Engine did not confirm the turn in time.")
         }
       }
-      guard let admission = resumes[thread] else {
-        throw RouterFailure("The Engine did not accept the pending resume.")
+      guard let admission = admissions[thread] else {
+        throw RouterFailure("The Engine did not accept the pending turn.")
       }
       if let expected = admission.expectedTurn, expected != turn { return nil }
-      guard !admission.finishedTurns.contains(turn) else {
-        throw RouterFailure("The resumed turn has already ended.")
+      if case .model(let trigger) = source, trigger != admission.trigger {
+        throw RouterFailure("The model request does not match the admitted turn trigger.")
       }
-      resumes.removeValue(forKey: thread)
+      guard !admission.finishedTurns.contains(turn) else {
+        throw RouterFailure("The admitted turn has already ended.")
+      }
+      admissions.removeValue(forKey: thread)
       return admission.cwd
     }
   }

@@ -7,7 +7,7 @@ final class RouterRuntime: @unchecked Sendable {
   let sessionDirectory: URL
   let secret = UUID().uuidString + UUID().uuidString
   private let hookLock = NSLock()
-  private let resumes = RouterResumeTracker()
+  private let admissions = RouterTurnAdmissionTracker()
   private let connect: @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream
   private let connectHTTP: @Sendable (RouterAccountSnapshot, [String: String]) -> any RouterUpstream
   private let search: @Sendable (URLRequest) throws -> Data
@@ -107,22 +107,21 @@ final class RouterRuntime: @unchecked Sendable {
   func observeRequest(_ message: [String: Any]) throws {
     if message["method"] as? String == "turn/start",
       let params = message["params"] as? [String: Any],
-      params["turnTrigger"] as? String == "resume_interrupted_task",
-      let input = params["input"] as? [Any], input.isEmpty,
-      params["toolOutput"] == nil || params["toolOutput"] is NSNull,
+      RouterTurnAdmissionTracker.trigger(params) != nil,
       try ledger.title(RouterJSON.text(params, "threadId")) != nil
     {
-      throw RouterFailure("An automatic title task cannot resume an interrupted user turn.")
+      throw RouterFailure("An automatic title task cannot start an admitted user turn.")
     }
-    try resumes.request(message)
+    try admissions.request(message)
   }
 
   func observeResponse(_ message: [String: Any]) throws {
-    try resumes.response(message)
+    try admissions.response(message)
   }
 
-  func bindResumedTurn(_ metadata: [String: Any]) throws {
-    guard metadata["turn_trigger"] as? String == "resume_interrupted_task",
+  func bindAdmittedTurn(_ metadata: [String: Any]) throws {
+    guard let value = metadata["turn_trigger"] as? String,
+      let trigger = RouterAdmittedTurnTrigger(rawValue: value),
       metadata["request_kind"] as? String == "turn"
     else { return }
     let source = try RouterRequest.optionalMetadataText(metadata, "thread_source")
@@ -135,10 +134,11 @@ final class RouterRuntime: @unchecked Sendable {
         throw RouterFailure("Title task classification changed.")
       }
       if try ledger.bound(key) != nil { return }
-      guard let cwd = try resumes.claim(thread: thread, turn: turn) else {
-        throw RouterFailure("The resumed turn was not admitted by the Engine observer.")
+      guard let cwd = try admissions.claim(thread: thread, turn: turn, source: .model(trigger))
+      else {
+        throw RouterFailure("The turn was not admitted by the Engine observer.")
       }
-      // Resumption starts a new turn and uses the ordinary folder selection.
+      // Desktop-admitted turns use the same folder selection as a user prompt.
       let account = try accounts.select(cwd: cwd).account.id
       try ledger.bind(key, account: account)
       try recordLastUsed(account)
@@ -154,7 +154,7 @@ final class RouterRuntime: @unchecked Sendable {
       case "Stop": try ledger.stop(thread, turn: turn)
       case "PreCompact":
         if try ledger.bound(key) == nil {
-          if let cwd = try resumes.claim(thread: thread, turn: turn) {
+          if let cwd = try admissions.claim(thread: thread, turn: turn, source: .compactHook) {
             let account = try accounts.select(cwd: cwd).account.id
             try ledger.bind(key, account: account)
             try recordLastUsed(account)
@@ -169,7 +169,7 @@ final class RouterRuntime: @unchecked Sendable {
           _ = try RouterJSON.text(event, "agent_id")
           return ["continue": true]
         }
-        resumes.remember(thread: thread, cwd: try RouterJSON.text(event, "cwd"))
+        admissions.remember(thread: thread, cwd: try RouterJSON.text(event, "cwd"))
         if try ledger.bound(key) == nil {
           let account = try accounts.select(cwd: RouterJSON.text(event, "cwd"))
           try ledger.bind(key, account: account.account.id)
@@ -327,7 +327,7 @@ final class RouterRuntime: @unchecked Sendable {
             ]))
           continue
         }
-        try bindResumedTurn(metadata)
+        try bindAdmittedTurn(metadata)
         let (key, accountID) = try RouterRequest.binding(metadata, ledger: ledger)
         currentTurn = key
         let account = try accounts.bound(accountID)

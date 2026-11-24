@@ -77,7 +77,7 @@ def verify(app, router, report, ci):
         )
         if (
             not bridge_proof.is_file()
-            or bridge_proof.read_text() != "bridge_routed_turn\n"
+            or bridge_proof.read_text() != "bridge_routed_turn\nscheduled_automation\n"
         ):
             raise ValueError(
                 "The official Engine bridge scenario was skipped or incomplete."
@@ -90,7 +90,7 @@ def verify(app, router, report, ci):
         cases = json.loads(proof.read_text())
         if not isinstance(cases, list):
             raise ValueError("Invalid official Engine scenario evidence.")
-        cases.append("bridge_routed_turn")
+        cases.extend(["bridge_routed_turn", "scheduled_automation"])
         if len(cases) != len(SCENARIOS) or set(cases) != SCENARIOS:
             raise ValueError(
                 "The official Engine scenarios were skipped or incomplete."
