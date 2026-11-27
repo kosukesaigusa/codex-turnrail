@@ -45,8 +45,9 @@ struct RouterTransportFailure: LocalizedError {
       ].contains(code)
     case NSPOSIXErrorDomain:
       if code == Int(ECANCELED) {
-        // A transport receive can report cancellation without a deliberate local close.
-        return phase == .receive && cause == .transport
+        // The request is not sent during checks; remote receive cancellation also
+        // permits the Engine's existing stream recovery. A send remains ambiguous.
+        return [.check, .receive].contains(phase) && cause == .transport
       }
       return [
         ENOTCONN, ECONNRESET, ECONNABORTED, EPIPE, ETIMEDOUT, ENETDOWN,

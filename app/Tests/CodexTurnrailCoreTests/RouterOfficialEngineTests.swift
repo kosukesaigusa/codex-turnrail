@@ -486,7 +486,8 @@ struct RouterOfficialEngineTests {
           "model_wait", "model_wait_cancellation", "engine_idle_timeout",
           "connection_limit_recovery", "connection_limit_mid_response_recovery",
           "http_recovery", "http_content_validation", "tool_result_recovery",
-          "receive_cancellation_recovery", "server_error_recovery", "service_unavailable_recovery",
+          "receive_cancellation_recovery", "presend_cancellation_recovery", "server_error_recovery",
+          "service_unavailable_recovery",
           "goal_continuation", "goal_resume", "mailbox_steering", "desktop_startup_command",
           "interrupted_session_resume",
         ]), to: URL(filePath: proof))

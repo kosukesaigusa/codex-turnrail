@@ -6,6 +6,24 @@ import Testing
 
 struct RouterKeepAliveTests {
   @Test(.timeLimit(.minutes(1)))
+  func closedConnectionBeforeSendReportsARealPreSendFailure() throws {
+    let server = try QuietTransportServer(mode: .silent)
+    defer { server.stop() }
+    let client = server.connect()
+    try client.checkConnection()
+    client.close()
+    do {
+      try client.send(Data(#"{"type":"response.create","input":[]}"#.utf8))
+      Issue.record("The closed transport unexpectedly sent a request.")
+    } catch let failure as RouterTransportFailure {
+      #expect(failure.phase == .check)
+      #expect(failure.cause == .localClose)
+      #expect(!failure.permitsEngineRecovery)
+    }
+    #expect(server.requests.isEmpty)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
   func quietResponseSurvivesPeerIdleDeadlineWithoutReplay() throws {
     let server = try QuietTransportServer(mode: .delayed)
     defer { server.stop() }
