@@ -29,14 +29,16 @@ struct RouterRecoveryTests {
     for close in [
       URLSessionWebSocketTask.CloseCode.protocolError, .policyViolation, .messageTooBig,
     ] {
-      for error in [
-        URLError(.networkConnectionLost) as NSError,
-        NSError(domain: NSPOSIXErrorDomain, code: Int(ECANCELED)),
-      ] {
-        #expect(
-          !RouterTransportFailure(
-            phase: .receive, error: error, closeCode: close
-          ).permitsEngineRecovery)
+      for phase in [RouterTransportFailure.Phase.check, .receive] {
+        for error in [
+          URLError(.networkConnectionLost) as NSError,
+          NSError(domain: NSPOSIXErrorDomain, code: Int(ECANCELED)),
+        ] {
+          #expect(
+            !RouterTransportFailure(
+              phase: phase, error: error, closeCode: close
+            ).permitsEngineRecovery)
+        }
       }
     }
     var local = RouterTransportFailure(
@@ -46,21 +48,23 @@ struct RouterRecoveryTests {
   }
 
   @Test
-  func onlyTransportReceiveCancellationPermitsEngineRecovery() {
+  func transportCancellationRecoversBeforeSendingOrDuringReceive() {
     var failure = RouterTransportFailure(
       phase: .receive, error: NSError(domain: NSPOSIXErrorDomain, code: Int(ECANCELED)),
       closeCode: .invalid)
     #expect(failure.permitsEngineRecovery)
-    for phase in [RouterTransportFailure.Phase.check, .send] {
+    failure.phase = .check
+    #expect(failure.permitsEngineRecovery)
+    failure.phase = .send
+    #expect(!failure.permitsEngineRecovery)
+    for phase in [RouterTransportFailure.Phase.check, .send, .receive] {
       failure.phase = phase
-      #expect(!failure.permitsEngineRecovery)
-    }
-    failure.phase = .receive
-    for cause in [
-      RouterTransportFailure.Cause.localClose, .probe, .keepAlive, .sendTimeout, .receiveTimeout,
-    ] {
-      failure.cause = cause
-      #expect(!failure.permitsEngineRecovery)
+      for cause in [
+        RouterTransportFailure.Cause.localClose, .probe, .keepAlive, .sendTimeout, .receiveTimeout,
+      ] {
+        failure.cause = cause
+        #expect(!failure.permitsEngineRecovery)
+      }
     }
   }
 

@@ -92,7 +92,8 @@ final class RouterWebSocket: RouterUpstream, @unchecked Sendable {
   func send(_ data: Data) throws {
     let result = RouterAsyncResult<Void>()
     try stateLock.withLock {
-      if let terminal { throw inPhase(terminal, .send) }
+      // A saved terminal failure is observed before task.send is invoked.
+      if let terminal { throw inPhase(terminal, .check) }
       pendingSend = result
     }
     defer { stateLock.withLock { pendingSend = nil } }
